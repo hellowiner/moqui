@@ -11,6 +11,18 @@
  */
 package org.moqui.impl
 
+import org.apache.http.HttpEntity
+import org.apache.http.NameValuePair
+import org.apache.http.client.entity.UrlEncodedFormEntity
+import org.apache.http.client.methods.CloseableHttpResponse
+import org.apache.http.client.methods.HttpPost
+import org.apache.http.entity.ContentType
+import org.apache.http.entity.StringEntity
+import org.apache.http.impl.client.CloseableHttpClient
+import org.apache.http.impl.client.HttpClients
+import org.apache.http.message.BasicNameValuePair
+import org.apache.http.util.EntityUtils
+
 import javax.servlet.ServletRequest
 import javax.servlet.http.HttpSession
 import javax.servlet.ServletContext
@@ -208,7 +220,7 @@ class StupidWebUtilities {
         Set<String> keySet() { return mp.keySet() }
         Collection<Object> values() {
             List<Object> values = new ArrayList<Object>(mp.size())
-            for (Object orig in mp.values()) values.add(canonicalizeValue(orig))
+            for (Object orig in mp.values()) values.add(StupidWebUtilities.canonicalizeValue(orig))
             return values
         }
         Set<Map.Entry<String, Object>> entrySet() {
@@ -243,5 +255,56 @@ class StupidWebUtilities {
         // catch strings or lists with a single string in them unwrapped above
         if (orig instanceof String) orig = defaultWebEncoder.canonicalize(orig, false)
         return orig
+    }
+
+    static String simpleHttpStringRequest(String location, String requestBody, String contentType) {
+        if (!contentType) contentType = "text/plain"
+        String resultString = ""
+        CloseableHttpClient httpClient = HttpClients.createDefault()
+        try {
+            HttpPost httpPost = new HttpPost(location)
+            if (requestBody) {
+                StringEntity requestEntity = new StringEntity(requestBody, ContentType.create(contentType, "UTF-8"))
+                httpPost.setEntity(requestEntity)
+                httpPost.setHeader("Content-Type", contentType)
+            }
+
+            CloseableHttpResponse response = httpClient.execute(httpPost)
+            try {
+                HttpEntity entity = response.getEntity()
+                resultString = StupidUtilities.toStringCleanBom(EntityUtils.toByteArray(entity))
+            } finally {
+                response.close()
+            }
+        } finally {
+            httpClient.close()
+        }
+
+        return resultString
+    }
+
+    static String simpleHttpMapRequest(String location, Map requestMap) {
+        String resultString = ""
+        CloseableHttpClient httpClient = HttpClients.createDefault()
+        try {
+            List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>()
+            for (Map.Entry requestEntry in requestMap.entrySet())
+                nameValuePairs.add(new BasicNameValuePair(requestEntry.key as String, requestEntry.value as String))
+
+            HttpPost httpPost = new HttpPost(location)
+            httpPost.setEntity(new UrlEncodedFormEntity(nameValuePairs))
+
+            CloseableHttpResponse response = httpClient.execute(httpPost)
+            try {
+                HttpEntity entity = response.getEntity()
+                resultString = StupidUtilities.toStringCleanBom(EntityUtils.toByteArray(entity))
+            } finally {
+                response.close()
+            }
+        } finally {
+            httpClient.close()
+        }
+
+        return resultString
     }
 }

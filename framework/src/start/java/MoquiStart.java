@@ -11,6 +11,7 @@
  */
 
 import java.io.*;
+import java.lang.InterruptedException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.MalformedURLException;
@@ -38,7 +39,7 @@ public class MoquiStart extends ClassLoader {
         // now grab the first arg and see if it is a known command
         String firstArg = args.length > 0 ? args[0] : "";
 
-        if ("-help".equals(firstArg) || "-?".equals(firstArg)) {
+        if (firstArg.contains("-help") || "-?".equals(firstArg)) {
             // setup the class loader
             MoquiStart moquiStartLoader = new MoquiStart(true);
             Thread.currentThread().setContextClassLoader(moquiStartLoader);
@@ -53,7 +54,7 @@ public class MoquiStart extends ClassLoader {
             System.out.println("------------------------------------------------");
             System.out.println("Current runtime directory (moqui.runtime): " + System.getProperty("moqui.runtime"));
             System.out.println("Current configuration file (moqui.conf): " + System.getProperty("moqui.conf"));
-            System.out.println("To set these properties use something like: java -Dmoqui.conf=conf/MoquiStagingConf.xml -jar moqui.jar ...");
+            System.out.println("To set these properties use something like: java -Dmoqui.conf=conf/MoquiStagingConf.xml -jar moqui.war ...");
             System.out.println("------------------------------------------------");
             System.out.println("Usage: java -jar moqui.war [command] [arguments]");
             System.out.println("-help, -? ---- Help (this text)");
@@ -66,7 +67,7 @@ public class MoquiStart extends ClassLoader {
             System.out.println("    -tenantId=<tenantId> ---- ID for the Tenant to load the data into");
             System.out.println("  If no -types or -location argument is used all known data files of all types will be loaded.");
             System.out.println("[default] ---- Run embedded Winstone server.");
-            System.out.println("  See http://winstone.sourceforge.net/#commandLine for all argument details.");
+            System.out.println("  See https://code.google.com/p/winstone/wiki/CmdLineOption for all argument details.");
             System.out.println("  Selected argument details:");
             System.out.println("    --httpPort               = set the http listening port. -1 to disable, Default is 8080");
             System.out.println("    --httpListenAddress      = set the http listening address. Default is all interfaces");
@@ -98,6 +99,7 @@ public class MoquiStart extends ClassLoader {
             }
 
             try {
+                System.out.println("Loading data with args [" + argMap + "]");
                 Class<?> c = moquiStartLoader.loadClass("org.moqui.Moqui");
                 Method m = c.getMethod("loadData", new Class[] { Map.class });
                 m.invoke(null, argMap);
@@ -130,6 +132,7 @@ public class MoquiStart extends ClassLoader {
             argMap.put("warfile", moquiStartLoader.outerFile.getName());
             System.out.println("Running Winstone embedded server with args [" + argMap + "]");
 
+            /* for old Winstone 0.9.10:
             Class<?> c = moquiStartLoader.loadClass("winstone.Launcher");
             Method initLogger = c.getMethod("initLogger", new Class[] { Map.class });
             Method shutdown = c.getMethod("shutdown");
@@ -138,9 +141,20 @@ public class MoquiStart extends ClassLoader {
             // start Winstone with a new instance of the server
             Constructor wlc = c.getConstructor(new Class[] { Map.class });
             Object winstone = wlc.newInstance(argMap);
+            */
 
-            // now that we have an object to shutdown, set the hook
-            Runtime.getRuntime().addShutdownHook(new MoquiShutdown(shutdown, winstone, moquiStartLoader.jarFileList));
+            Class<?> c = moquiStartLoader.loadClass("net.winstone.Server");
+            Method start = c.getMethod("start");
+            // Method shutdown = c.getMethod("shutdown");
+            // start Winstone with a new instance of the server
+            Constructor wlc = c.getConstructor(new Class[] { Map.class });
+            Object winstone = wlc.newInstance(argMap);
+            start.invoke(winstone);
+
+            // NOTE: winstone seems to have its own shutdown hook in the newer version, so using hook to close files only:
+            Thread shutdownHook = new MoquiShutdown(null, null, moquiStartLoader.jarFileList);
+            shutdownHook.setDaemon(true);
+            Runtime.getRuntime().addShutdownHook(shutdownHook);
         } catch (Exception e) {
             System.out.println("Error loading or running Winstone embedded server with args [" + argMap + "]: " + e.toString());
             e.printStackTrace();
@@ -212,12 +226,14 @@ public class MoquiStart extends ClassLoader {
             this.jarFileList = jarFileList;
         }
         public void run() {
-            System.out.println("========== Shutting down Moqui Executable (closing jars, etc) ==========");
-
             // run this first, ie shutdown the container before closing jarFiles to avoid errors with classes missing
             if (callMethod != null) {
                 try { callMethod.invoke(callObject); } catch (Exception e) { System.out.println("Error in shutdown: " + e.toString()); }
             }
+
+            // give things a couple seconds to destroy; this way of running is mostly for dev/test where this should be sufficient
+            try { synchronized (this) { this.wait(2000); } } catch (Exception e) { System.out.println("Shutdown wait interrupted"); }
+            System.out.println("========== Shutting down Moqui Executable (closing jars, etc) ==========");
 
             // close all jarFiles so they will "deleteOnExit"
             for (JarFile jarFile : jarFileList) {

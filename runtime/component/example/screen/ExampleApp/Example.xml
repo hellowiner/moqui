@@ -11,7 +11,7 @@ This Work includes contributions authored by David E. Jones, not as a
 "work for hire", who hereby disclaims any copyright to the same.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.4.xsd"
         default-menu-title="Example" default-menu-index="1">
 
     <!-- this is a test, and example, of overriding the default FTL macro template to use for this screen -->
@@ -20,6 +20,9 @@ This Work includes contributions authored by David E. Jones, not as a
     <subscreens default-item="FindExample"/>
 
     <widgets>
+        <!-- showing conditionally here is only needed because of the pattern used for New Example using the
+          EditExample screen; if a separate dialog or something is used this is not needed as EditExample would always
+          have an exampleId parameter and conditional menu can be automatic -->
         <section name="ExampleMenu">
             <condition><expression>exampleId</expression></condition>
             <widgets><subscreens-menu id="example-menu" type="tab"/></widgets>

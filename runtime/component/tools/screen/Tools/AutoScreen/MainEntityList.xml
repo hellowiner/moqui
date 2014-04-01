@@ -11,7 +11,7 @@ This Work includes contributions authored by David E. Jones, not as a
 "work for hire", who hereby disclaims any copyright to the same.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.4.xsd"
         default-menu-title="Auto Screen Entity List" default-menu-index="1">
 
     <transition name="find">
@@ -25,9 +25,8 @@ This Work includes contributions authored by David E. Jones, not as a
     <widgets>
         <form-single name="SelectEntity" transition="find">
             <field name="aen"><default-field title="All Entities">
-                <drop-down combo-box="true" allow-empty="true">
-                    <list-options list="allEntityList" key="${fullEntityName}"
-                                  text="${entityName} - ${context.package}"/>
+                <drop-down allow-empty="true">
+                    <list-options list="allEntityList" key="${fullEntityName}" text="${entityName} - ${context.package}"/>
                 </drop-down>
             </default-field></field>
             <field name="submitButton"><default-field title="Select"><submit/></default-field></field>

@@ -16,9 +16,11 @@ import org.moqui.impl.actions.XmlAction
 import org.moqui.impl.context.ExecutionContextFactoryImpl
 import org.moqui.entity.EntityFind
 import org.moqui.entity.EntityValue
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class EntityEcaRule {
-    protected final static org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(EntityEcaRule.class)
+    protected final static Logger logger = LoggerFactory.getLogger(EntityEcaRule.class)
 
     protected Node eecaNode
     protected String location
@@ -54,12 +56,15 @@ class EntityEcaRule {
         if (entityName != eecaNode."@entity") return
         if (ec.getMessage().hasError() && eecaNode."@run-on-error" != "true") return
 
+        if (before && eecaNode."@run-before" != "true") return
+        if (!before && eecaNode."@run-before" == "true") return
+
         EntityValue originalValue = null
         if (before && (operation == "update" || operation == "delete") && eecaNode."@get-original-value" == "true") {
             originalValue = getDbValue(ec, fieldValues)
         }
 
-        if (before && (operation == "update" || operation == "delete") && eecaNode."@get-entire-entity" == "true") {
+        if ((operation == "update" || operation == "delete") && eecaNode."@get-entire-entity" == "true") {
             // fill in any missing (unset) values from the DB
             EntityValue ev = originalValue ?: getDbValue(ec, fieldValues)
             if (ev != null) {
@@ -68,10 +73,6 @@ class EntityEcaRule {
                     if (!fieldValues.containsKey(entry.getKey())) fieldValues.put(entry.getKey(), entry.getValue())
             }
         }
-
-        if (before && eecaNode."@run-before" != "true") return
-        if (!before && eecaNode."@run-before" == "true") return
-
 
         try {
             ec.context.push()

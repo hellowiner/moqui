@@ -179,7 +179,7 @@ class ScreenRenderImpl implements ScreenRender {
         ScreenDefinition sd = sdIterator.next()
         // for these authz is not required, as long as something authorizes on the way to the transition, or
         // the transition itself, it's fine
-        ec.artifactExecution.push(
+        ec.getArtifactExecution().push(
                 new ArtifactExecutionInfoImpl(sd.location, "AT_XML_SCREEN", "AUTHZA_VIEW"), false)
 
         boolean loggedInAnonymous = false
@@ -199,24 +199,10 @@ class ScreenRenderImpl implements ScreenRender {
             ri = recursiveRunTransition(sdIterator)
         } else {
             // run the transition
-            if (screenUrlInfo.getExtraPathNameList() && screenUrlInfo.targetTransition.getPathParameterList()) {
-                List<String> pathParameterList = screenUrlInfo.targetTransition.getPathParameterList()
-                int i = 0
-                for (String extraPathName in screenUrlInfo.getExtraPathNameList()) {
-                    if (pathParameterList.size() > i) {
-                        if (ec.web) ec.web.addDeclaredPathParameter(pathParameterList.get(i), extraPathName)
-                        ec.context.put(pathParameterList.get(i), extraPathName)
-                        i++
-                    } else {
-                        break
-                    }
-                }
-            }
-
             ri = screenUrlInfo.targetTransition.run(this)
         }
 
-        ec.artifactExecution.pop()
+        ec.getArtifactExecution().pop()
         if (loggedInAnonymous) ec.getUser().logoutAnonymousOnly()
 
         return ri
@@ -229,17 +215,17 @@ class ScreenRenderImpl implements ScreenRender {
         if (logger.traceEnabled) logger.trace("Rendering screen [${rootScreenLocation}] with path list [${originalScreenPathNameList}]")
 
         this.screenUrlInfo = new ScreenUrlInfo(this, rootScreenDef, originalScreenPathNameList, null, null,
-                (ec.web != null && ec.web.requestParameters.lastStandalone == "true"))
-        if (ec.web) {
+                (ec.getWeb() != null && ec.getWeb().requestParameters.lastStandalone == "true"))
+        if (ec.getWeb()) {
             // clear out the parameters used for special screen URL config
-            if (ec.web.requestParameters.lastStandalone) ec.web.requestParameters.lastStandalone = ""
+            if (ec.getWeb().requestParameters.lastStandalone) ec.getWeb().requestParameters.lastStandalone = ""
 
             // if screenUrlInfo has any parameters add them to the request (probably came from a transition acting as an alias)
             Map<String, String> suiParameterMap = this.screenUrlInfo.parameterMap
-            if (suiParameterMap) ec.web.requestParameters.putAll(suiParameterMap)
+            if (suiParameterMap) ec.getWeb().requestParameters.putAll(suiParameterMap)
 
             // add URL parameters, if there were any in the URL (in path info or after ?)
-            this.screenUrlInfo.addParameters(ec.web.requestParameters)
+            this.screenUrlInfo.addParameters(ec.getWeb().requestParameters)
         }
 
         // check webapp settings for each screen in the path
@@ -248,9 +234,9 @@ class ScreenRenderImpl implements ScreenRender {
         }
 
         // check this here after the ScreenUrlInfo (with transition alias, etc) has already been handled
-        if (ec.web && ec.web.requestParameters.renderMode) {
+        if (ec.getWeb() && ec.getWeb().requestParameters.renderMode) {
             // we know this is a web request, set defaults if missing
-            renderMode = ec.web.requestParameters.renderMode
+            renderMode = ec.getWeb().requestParameters.renderMode
             String mimeType = sfi.getMimeTypeByMode(renderMode)
             if (mimeType) outputContentType = mimeType
         }
@@ -264,12 +250,12 @@ class ScreenRenderImpl implements ScreenRender {
         // before we render, set the character encoding (set the content type later, after we see if there is sub-content with a different type)
         if (this.response != null) response.setCharacterEncoding(this.characterEncoding)
 
-
         // if there is a transition run that INSTEAD of the screen to render
         if (screenUrlInfo.targetTransition) {
             // if this transition has actions and request was not secure or any parameters were not in the body
             // return an error, helps prevent XSRF attacks
-            if (request != null && screenUrlInfo.targetTransition.actions != null) {
+            if (request != null && screenUrlInfo.getTargetTransition().hasActionsOrSingleService() &&
+                    !screenUrlInfo.getTargetTransition().isReadOnly()) {
                 if ((!request.isSecure() && getWebappNode()."@https-enabled" != "false") ||
                         request.getQueryString() ||
                         StupidWebUtilities.getPathInfoParameterMap(request.getPathInfo())) {
@@ -277,7 +263,7 @@ class ScreenRenderImpl implements ScreenRender {
                         """Cannot run screen transition with actions from non-secure request or with URL
                         parameters for security reasons (they are not encrypted and need to be for data
                         protection and source validation). Change the link this came from to be a
-                        form with hidden input fields instead.""")
+                        form with hidden input fields instead, or declare the transition as read-only.""")
                 }
             }
 
@@ -306,17 +292,17 @@ class ScreenRenderImpl implements ScreenRender {
 
                 if (screenUrlInfo.targetScreen.screenNode."@track-artifact-hit" != "false") {
                     sfi.ecfi.countArtifactHit("transition", ri?.type ?: "", screenUrlInfo.url,
-                            (ec.web ? ec.web.requestParameters : null), transitionStartTime,
+                            (ec.getWeb() ? ec.getWeb().requestParameters : null), transitionStartTime,
                             System.currentTimeMillis(), null)
                 }
             }
 
             if (ri == null) throw new IllegalArgumentException("No response found for transition [${screenUrlInfo.targetTransition.name}] on screen [${screenUrlInfo.targetScreen.location}]")
 
-            if (ri.saveCurrentScreen && ec.web != null) {
+            if (ri.saveCurrentScreen && ec.getWeb() != null) {
                 StringBuilder screenPath = new StringBuilder()
                 for (String pn in screenUrlInfo.fullPathNameList) screenPath.append("/").append(pn)
-                ((WebFacadeImpl) ec.web).saveScreenLastInfo(screenPath.toString(), null)
+                ((WebFacadeImpl) ec.getWeb()).saveScreenLastInfo(screenPath.toString(), null)
             }
 
             if (ri.type == "none") return
@@ -325,8 +311,8 @@ class ScreenRenderImpl implements ScreenRender {
             String urlType = ri.urlType ?: "screen-path"
 
             // handle screen-last, etc
-            if (ec.web != null) {
-                WebFacadeImpl wfi = (WebFacadeImpl) ec.web
+            if (ec.getWeb() != null) {
+                WebFacadeImpl wfi = (WebFacadeImpl) ec.getWeb()
                 if (ri.type == "screen-last" || ri.type == "screen-last-noparam") {
                     String savedUrl = wfi.getRemoveScreenLastPath()
                     urlType = "screen-path"
@@ -343,15 +329,15 @@ class ScreenRenderImpl implements ScreenRender {
             // either send a redirect for the response, if possible, or just render the response now
             if (this.response != null) {
                 // save messages in session before redirecting so they can be displayed on the next screen
-                if (ec.web != null) {
-                    ((WebFacadeImpl) ec.web).saveMessagesToSession()
-                    if (ri.saveParameters) ((WebFacadeImpl) ec.web).saveRequestParametersToSession()
-                    if (ec.message.hasError()) ((WebFacadeImpl) ec.web).saveErrorParametersToSession()
+                if (ec.getWeb() != null) {
+                    ((WebFacadeImpl) ec.getWeb()).saveMessagesToSession()
+                    if (ri.saveParameters) ((WebFacadeImpl) ec.getWeb()).saveRequestParametersToSession()
+                    if (ec.message.hasError()) ((WebFacadeImpl) ec.getWeb()).saveErrorParametersToSession()
                 }
 
                 if (urlType == "plain") {
                     StringBuilder ps = new StringBuilder()
-                    Map<String, String> pm = (Map<String, String>) ri.expandParameters(ec)
+                    Map<String, String> pm = (Map<String, String>) ri.expandParameters(getScreenUrlInfo(), ec)
                     if (pm) {
                         for (Map.Entry<String, String> pme in pm) {
                             if (!pme.value) continue
@@ -368,12 +354,20 @@ class ScreenRenderImpl implements ScreenRender {
                 } else {
                     // default is screen-path
                     ScreenUrlInfo fullUrl = buildUrl(rootScreenDef, screenUrlInfo.preTransitionPathNameList, url)
-                    fullUrl.addParameters(ri.expandParameters(ec))
+                    fullUrl.addParameters(ri.expandParameters(getScreenUrlInfo(), ec))
                     // if this was a screen-last and the screen has declared parameters include them in the URL
-                    Map savedParameters = ((WebFacadeImpl) ec.web)?.getSavedParameters()
+                    Map savedParameters = ((WebFacadeImpl) ec.getWeb())?.getSavedParameters()
                     ScreenUrlInfo.copySpecialParameters(savedParameters, fullUrl.getPathParameterMap())
+                    // screen parameters
                     if (ri.type == "screen-last" && savedParameters && fullUrl.getTargetScreen()?.getParameterMap()) {
                         for (String parmName in fullUrl.getTargetScreen().getParameterMap().keySet()) {
+                            if (savedParameters.get(parmName))
+                                fullUrl.addParameter(parmName, savedParameters.get(parmName))
+                        }
+                    }
+                    // transition parameters
+                    if (ri.type == "screen-last" && savedParameters && fullUrl.getTargetTransition()?.getParameterMap()) {
+                        for (String parmName in fullUrl.getTargetTransition().getParameterMap().keySet()) {
                             if (savedParameters.get(parmName))
                                 fullUrl.addParameter(parmName, savedParameters.get(parmName))
                         }
@@ -423,7 +417,7 @@ class ScreenRenderImpl implements ScreenRender {
 
                         if (screenUrlInfo.targetScreen.screenNode."@track-artifact-hit" != "false") {
                             sfi.ecfi.countArtifactHit("screen-content", fileContentType, screenUrlInfo.url,
-                                    (ec.web ? ec.web.requestParameters : null), resourceStartTime,
+                                    (ec.getWeb() ? ec.getWeb().requestParameters : null), resourceStartTime,
                                     System.currentTimeMillis(), totalLen)
                         }
                         if (logger.traceEnabled) logger.trace("Sent binary response of length [${totalLen}] with from file [${screenUrlInfo.fileResourceRef.location}] for request to [${screenUrlInfo.url}]")
@@ -467,7 +461,7 @@ class ScreenRenderImpl implements ScreenRender {
 
                         if (screenUrlInfo.targetScreen.screenNode."@track-artifact-hit" != "false") {
                             sfi.ecfi.countArtifactHit("screen-content", fileContentType, screenUrlInfo.url,
-                                    (ec.web ? ec.web.requestParameters : null), resourceStartTime,
+                                    (ec.getWeb() ? ec.getWeb().requestParameters : null), resourceStartTime,
                                     System.currentTimeMillis(), length)
                         }
                     } else {
@@ -580,7 +574,7 @@ class ScreenRenderImpl implements ScreenRender {
             if (beganTransaction && sfi.ecfi.transactionFacade.isTransactionInPlace()) sfi.ecfi.transactionFacade.commit()
             if (screenUrlInfo.targetScreen.screenNode."@track-artifact-hit" != "false") {
                 sfi.ecfi.countArtifactHit("screen", this.outputContentType, screenUrlInfo.url,
-                        (ec.web ? ec.web.requestParameters : null), screenStartTime, System.currentTimeMillis(), null)
+                        (ec.getWeb() ? ec.getWeb().requestParameters : null), screenStartTime, System.currentTimeMillis(), null)
             }
         }
     }
@@ -600,12 +594,12 @@ class ScreenRenderImpl implements ScreenRender {
                 && !ec.getUser().getUserId() && !ec.getUser().getLoggedInAnonymous()) {
             logger.info("Screen at location [${currentSd.location}], which is part of [${screenUrlInfo.fullPathNameList}] under screen [${screenUrlInfo.fromSd.location}] requires authentication but no user is currently logged in.")
             // save the request as a save-last to use after login
-            if (ec.web && screenUrlInfo.fileResourceRef == null) {
+            if (ec.getWeb() && screenUrlInfo.fileResourceRef == null) {
                 StringBuilder screenPath = new StringBuilder()
                 for (String pn in screenUrlInfo.fullPathNameList) screenPath.append("/").append(pn)
-                ((WebFacadeImpl) ec.web).saveScreenLastInfo(screenPath.toString(), null)
+                ((WebFacadeImpl) ec.getWeb()).saveScreenLastInfo(screenPath.toString(), null)
                 // save messages in session before redirecting so they can be displayed on the next screen
-                ((WebFacadeImpl) ec.web).saveMessagesToSession()
+                ((WebFacadeImpl) ec.getWeb()).saveMessagesToSession()
             }
 
             // find the last login path from screens in path (whether rendered or not)
@@ -614,26 +608,26 @@ class ScreenRenderImpl implements ScreenRender {
                 if (sd.screenNode."@login-path") loginPath = sd.screenNode."@login-path"
             }
 
-            // respond with 401 and the login screen instead of a redirect; JS client libraries handle this much better
-            List<String> pathElements = loginPath.split("/") as List
-            if (loginPath.startsWith("/")) {
-                this.originalScreenPathNameList = pathElements
+            if (screenUrlInfo.isLastStandalone() || screenUrlInfo.getTargetTransition() != null) {
+                // respond with 401 and the login screen instead of a redirect; JS client libraries handle this much better
+                List<String> pathElements = loginPath.split("/") as List
+                if (loginPath.startsWith("/")) {
+                    this.originalScreenPathNameList = pathElements
+                } else {
+                    this.originalScreenPathNameList = screenUrlInfo.preTransitionPathNameList
+                    this.originalScreenPathNameList.addAll(pathElements)
+                }
+                // reset screenUrlInfo and call this again to start over with the new target
+                screenUrlInfo = null
+                internalRender()
+                if (response != null) response.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
+                return false
             } else {
-                this.originalScreenPathNameList = screenUrlInfo.preTransitionPathNameList
-                this.originalScreenPathNameList.addAll(pathElements)
+                // now prepare and send the redirect
+                ScreenUrlInfo sui = new ScreenUrlInfo(this, rootScreenDef, [], loginPath, false, false)
+                response.sendRedirect(sui.url)
+                return false
             }
-            // reset screenUrlInfo and call this again to start over with the new target
-            screenUrlInfo = null
-            internalRender()
-            if (response != null) response.setStatus(HttpServletResponse.SC_UNAUTHORIZED)
-            return false
-
-            /*
-            // now prepare and send the redirect
-            ScreenUrlInfo sui = new ScreenUrlInfo(this, rootScreenDef, [], loginPath)
-            response.sendRedirect(sui.url)
-            return false
-            */
         }
 
         // if request not secure and screens requires secure redirect to https
@@ -641,7 +635,7 @@ class ScreenRenderImpl implements ScreenRender {
                 !request.isSecure()) {
             logger.info("Screen at location [${currentSd.location}], which is part of [${screenUrlInfo.fullPathNameList}] under screen [${screenUrlInfo.fromSd.location}] requires an encrypted/secure connection but the request is not secure, sending redirect to secure.")
             // save messages in session before redirecting so they can be displayed on the next screen
-            if (ec.web) ((WebFacadeImpl) ec.web).saveMessagesToSession()
+            if (ec.getWeb()) ((WebFacadeImpl) ec.getWeb()).saveMessagesToSession()
             // redirect to the same URL this came to
             response.sendRedirect(screenUrlInfo.getUrlWithParams())
             return false
@@ -947,17 +941,18 @@ class ScreenRenderImpl implements ScreenRender {
                 if (ctxParameterMap) sui.addParameters((Map) ctxParameterMap)
             }
             for (Node parameterNode in parameterParentNode."parameter")
-                sui.addParameter(parameterNode."@name", makeValue((String) parameterNode."@from" ?: (String) parameterNode."@name", (String) parameterNode."@value"))
+                sui.addParameter(parameterNode."@name", getContextValue(
+                        (String) parameterNode."@from" ?: (String) parameterNode."@name", (String) parameterNode."@value"))
         }
 
         return sui
     }
 
-    String makeValue(String from, String value) {
+    Object getContextValue(String from, String value) {
         if (value) {
             return ec.resource.evaluateStringExpand(value, getActiveScreenDef().location)
         } else if (from) {
-            return ec.resource.evaluateContextField(from, getActiveScreenDef().location) as String
+            return ec.resource.evaluateContextField(from, getActiveScreenDef().location)
         } else {
             return ""
         }
@@ -991,15 +986,12 @@ class ScreenRenderImpl implements ScreenRender {
     String getFieldValuePlainString(FtlNodeWrapper fieldNodeWrapper, String defaultValue) {
         // NOTE: defaultValue is handled below so that for a plain string it is not run through evaluateStringExpand
         Object obj = getFieldValue(fieldNodeWrapper, "")
-        // handle the special case of timestamps used for primary keys, make sure we avoid TZ, etc problems
-        if (obj instanceof Timestamp) return ((Timestamp) obj).getTime().toString()
-        // here's another alternative to consider, but sticking to the more reliable approach above for now:
-        //if (obj instanceof Timestamp) return ec.l10n.formatValue(obj, "yyyy-MM-dd hh:mm:ss.SSS z")
-
-        return obj ? obj.toString() : (defaultValue ?: "")
+        if (!obj && defaultValue) return defaultValue
+        return StupidUtilities.toPlainString(obj)
         // NOTE: this approach causes problems with currency fields, but kills the string expand for default-value... a better approach?
         //return obj ? obj.toString() : (defaultValue ? ec.getResource().evaluateStringExpand(defaultValue, null) : "")
     }
+
     Object getFieldValue(FtlNodeWrapper fieldNodeWrapper, String defaultValue) {
         Node fieldNode = fieldNodeWrapper.getGroovyNode()
         if (fieldNode."@entry-name") return ec.getResource().evaluateContextField((String) fieldNode."@entry-name", null)
@@ -1007,8 +999,8 @@ class ScreenRenderImpl implements ScreenRender {
         String mapName = fieldNode.parent()."@map" ?: "fieldValues"
         Object value = null
         // if this is an error situation try parameters first, otherwise try parameters last
-        if (ec.getWeb() != null && ec.getWeb().errorParameters != null && (ec.getWeb().errorParameters.moquiFormName == fieldNode.parent()."@name"))
-            value = ec.getWeb().errorParameters.get(fieldName)
+        if (ec.getWeb() != null && ec.getWeb().getErrorParameters() != null && (ec.getWeb().getErrorParameters().moquiFormName == fieldNode.parent()."@name"))
+            value = ec.getWeb().getErrorParameters().get(fieldName)
         if (!value && ec.getContext().get(mapName) && fieldNode.parent().name() == "form-single") {
             try {
                 Map valueMap = (Map) ec.getContext().get(mapName)
@@ -1025,9 +1017,11 @@ class ScreenRenderImpl implements ScreenRender {
             }
         }
         if (!value) value = ec.getContext().get(fieldName)
-        // this isn't needed since the parameters are copied to the context: if (!isError && isWebAndSameForm && !value) value = ec.web.parameters.get(fieldName)
+        // this isn't needed since the parameters are copied to the context: if (!isError && isWebAndSameForm && !value) value = ec.getWeb().parameters.get(fieldName)
         if (value) return value
-        return ec.getResource().evaluateStringExpand(defaultValue, null)
+        String defaultStr = ec.getResource().evaluateStringExpand(defaultValue, null)
+        if (defaultStr) return defaultStr
+        return value
     }
     String getFieldValueClass(FtlNodeWrapper fieldNodeWrapper) {
         Object fieldValue = null

@@ -16,6 +16,7 @@ import org.eclipse.mylyn.wikitext.core.parser.MarkupParser
 import org.eclipse.mylyn.wikitext.core.parser.builder.HtmlDocumentBuilder
 import org.moqui.context.Cache
 import org.moqui.context.TemplateRenderer
+import org.moqui.impl.screen.ScreenRenderImpl
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import freemarker.template.Template
@@ -54,6 +55,10 @@ class FtlCwikiTemplateRenderer implements TemplateRenderer {
             HtmlDocumentBuilder builder = new HtmlDocumentBuilder(cwikiWriter)
             // avoid the <html> and <body> tags
             builder.setEmitAsDocument(false)
+            // if we're in the context of a screen render, use it's URL for the base
+            ScreenRenderImpl sri = (ScreenRenderImpl) ecfi.getExecutionContext().getContext().get("sri")
+            if (sri != null) builder.setBase(sri.getBaseLinkUri())
+
             MarkupParser parser = new MarkupParser(new ConfluenceLanguage())
             parser.setBuilder(builder)
             parser.parse(ecfi.resourceFacade.getLocationText(location, false))

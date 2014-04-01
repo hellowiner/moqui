@@ -22,7 +22,14 @@ import org.kie.api.runtime.KieContainer
 import org.kie.api.runtime.KieSession
 import org.kie.api.runtime.StatelessKieSession
 import org.moqui.context.Cache
+import org.moqui.context.CacheFacade
+import org.moqui.context.LoggerFacade
+import org.moqui.context.ResourceFacade
+import org.moqui.context.ScreenFacade
+import org.moqui.context.TransactionFacade
+import org.moqui.entity.EntityFacade
 import org.moqui.impl.StupidWebUtilities
+import org.moqui.service.ServiceFacade
 
 import java.sql.Timestamp
 import java.util.jar.JarFile
@@ -63,7 +70,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
     
     protected boolean destroyed = false
     
-    protected final String runtimePath
+    protected String runtimePath
 
     protected final String confPath
     protected final Node confXmlRoot
@@ -245,6 +252,11 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         kieComponentReleaseIdCache = this.cacheFacade.getCache("kie.component.releaseId")
 
         postFacadeInit()
+    }
+
+    @Override
+    void postInit() {
+        this.serviceFacade.postInit()
     }
 
     protected void preFacadeInit() {
@@ -490,7 +502,9 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
     L10nFacade getL10nFacade() { return l10nFacade }
 
     // =============== Apache Camel Methods ===============
+    @Override
     CamelContext getCamelContext() { return camelContext }
+
     MoquiServiceComponent getMoquiServiceComponent() { return moquiServiceComponent }
     void registerCamelConsumer(String uri, MoquiServiceConsumer consumer) { camelConsumerByUriMap.put(uri, consumer) }
     MoquiServiceConsumer getCamelConsumer(String uri) { return camelConsumerByUriMap.get(uri) }
@@ -507,6 +521,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
     }
 
     // =============== ElasticSearch Methods ===============
+    @Override
     Client getElasticSearchClient() { return elasticSearchClient }
 
     protected void initElasticSearch() {
@@ -536,6 +551,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         }
     }
 
+    @Override
     KieContainer getKieContainer(String componentName) {
         KieServices services = KieServices.Factory.get()
 
@@ -610,6 +626,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
 
     }
 
+    @Override
     KieSession getKieSession(String ksessionName) {
         String componentName = kieSessionComponentCache.get(ksessionName)
         // try finding all component sessions
@@ -619,6 +636,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         if (!componentName) throw new IllegalStateException("No component KIE module found for session [${ksessionName}]")
         return getKieContainer(componentName).newKieSession(ksessionName)
     }
+    @Override
     StatelessKieSession getStatelessKieSession(String ksessionName) {
         String componentName = kieSessionComponentCache.get(ksessionName)
         // try finding all component sessions
@@ -646,7 +664,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         }
     }
 
-    ExecutionContextImpl getEci() { return (ExecutionContextImpl) this.executionContext }
+    ExecutionContextImpl getEci() { return (ExecutionContextImpl) this.getExecutionContext() }
 
     void destroyActiveExecutionContext() {
         ExecutionContext ec = this.activeContext.get()
@@ -682,13 +700,38 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         return Collections.unmodifiableMap(componentLocationMap)
     }
 
+    @Override
+    L10nFacade getL10n() { getL10nFacade() }
+
+    @Override
+    ResourceFacade getResource() { getResourceFacade() }
+
+    @Override
+    LoggerFacade getLogger() { getLoggerFacade() }
+
+    @Override
+    CacheFacade getCache() { getCacheFacade() }
+
+    @Override
+    TransactionFacade getTransaction() { getTransactionFacade() }
+
+    @Override
+    EntityFacade getEntity() { getEntityFacade(getExecutionContext()?.getTenantId()) }
+
+    @Override
+    ServiceFacade getService() { getServiceFacade() }
+
+    @Override
+    ScreenFacade getScreen() { getScreenFacade() }
+
     // ========== Server Stat Tracking ==========
     boolean getSkipStats() {
         // NOTE: the results of this condition eval can't be cached because the expression can use any data in the ec
-        return (skipStatsCond && getEci().getResource().evaluateCondition(skipStatsCond, null))
+        return skipStatsCond ? getEci().getResource().evaluateCondition(skipStatsCond, null) : false
     }
 
     protected boolean artifactPersistHit(String artifactType, String artifactSubType) {
+        if ("entity".equals(artifactType)) return false
         String cacheKey = artifactType + "#" + artifactSubType
         Boolean ph = artifactPersistHitByType.get(cacheKey)
         if (ph == null) {
@@ -716,17 +759,21 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         return artifactStats
     }
 
+    protected Set<String> entitiesToSkipHitCount = new TreeSet(['moqui.server.ArtifactHit', 'moqui.server.ArtifactHitBin',
+            'moqui.entity.SequenceValueItem', 'moqui.security.UserAccount'])
     void countArtifactHit(String artifactType, String artifactSubType, String artifactName, Map parameters,
                           long startTime, long endTime, Long outputSize) {
         // don't count the ones this calls
         if (artifactType == "service" && artifactName.contains("moqui.server.ArtifactHit")) return
-        if (artifactType == "entity" && artifactName == "moqui.server.ArtifactHit") return
+        if (artifactType == "entity" && artifactName in entitiesToSkipHitCount) return
+        if (["screen", "transition", "screen-content"].contains(artifactType) && getSkipStats()) return
 
         ExecutionContextImpl eci = this.getEci()
         long runningTimeMillis = endTime - startTime
 
-        // NOTE: never save hits for entity artifact hits, way too heavy and also avoids self-reference (could also be done by checking for ArtifactHit/etc of course)
-        if (!"entity".equals(artifactType) && artifactPersistHit(artifactType, artifactSubType) && !getSkipStats()) {
+        // NOTE: never save individual hits for entity artifact hits, way too heavy and also avoids self-reference
+        //     (could also be done by checking for ArtifactHit/etc of course)
+        if (artifactPersistHit(artifactType, artifactSubType)) {
             Map<String, Object> ahp = (Map<String, Object>) [visitId:eci.user.visitId, userId:eci.user.userId,
                 artifactType:artifactType, artifactSubType:artifactSubType, artifactName:artifactName,
                 startDateTime:new Timestamp(startTime), runningTimeMillis:runningTimeMillis]
@@ -770,7 +817,7 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
             // call async, let the server do it whenever
             eci.service.async().name("create", "moqui.server.ArtifactHit").parameters(ahp).call()
         }
-        if (artifactPersistBin(artifactType, artifactSubType) && !getSkipStats()) {
+        if (artifactPersistBin(artifactType, artifactSubType)) {
             Map<String, Object> ahb = artifactHitBinByType.get(artifactType + "." + artifactSubType + ":" + artifactName)
             if (ahb == null) ahb = makeArtifactHitBinMap(artifactType, artifactSubType, artifactName, startTime)
 
@@ -799,9 +846,10 @@ class ExecutionContextFactoryImpl implements ExecutionContextFactory {
         // check the time again and return just in case something got in while waiting with the same type
         if (startTime < (binStartTime + hitBinLengthMillis)) return ahb
 
-        // otherwise, persist the old (async so this is fast) and create a new one
+        // otherwise, persist the old and create a new one
         ahb.binEndDateTime = new Timestamp(binStartTime + hitBinLengthMillis)
-        executionContext.service.async().name("create", "moqui.server.ArtifactHitBin").parameters(ahb).call()
+        // do this sync to avoid overhead of job scheduling for a very simple service call, and to avoid infinite recursion when EntityJobStore is in place
+        executionContext.service.sync().name("create", "moqui.server.ArtifactHitBin").parameters(ahb).call()
 
         return makeArtifactHitBinMap(artifactType, artifactSubType, artifactName, startTime)
     }

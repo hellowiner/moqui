@@ -278,6 +278,8 @@ class ScreenDefinition {
         protected XmlAction condition = null
         protected XmlAction actions = null
         protected String singleServiceName = null
+
+        protected Map<String, ParameterItem> parameterByName = new HashMap()
         protected List<String> pathParameterList = null
 
         protected List<ResponseItem> conditionalResponseList = new ArrayList<ResponseItem>()
@@ -285,6 +287,7 @@ class ScreenDefinition {
         protected ResponseItem errorResponse = null
 
         protected boolean beginTransaction = true
+        protected boolean readOnly = false
 
         TransitionItem(Node transitionNode, ScreenDefinition parentScreen) {
             this.parentScreen = parentScreen
@@ -292,7 +295,11 @@ class ScreenDefinition {
             method = transitionNode."@method" ?: "any"
             location = "${parentScreen.location}.transition_${StupidUtilities.cleanStringForJavaName(name)}"
             beginTransaction = transitionNode."@begin-transaction" != "false"
+            readOnly = transitionNode."@read-only" == "true"
 
+            // parameter
+            for (Node parameterNode in transitionNode."parameter")
+                parameterByName.put((String) parameterNode."@name", new ParameterItem(parameterNode, location))
             // path-parameter
             if (transitionNode."path-parameter") {
                 pathParameterList = new ArrayList()
@@ -330,54 +337,84 @@ class ScreenDefinition {
         String getMethod() { return method }
         String getSingleServiceName() { return singleServiceName }
         List<String> getPathParameterList() { return pathParameterList }
-        boolean hasActionsOrSingleService() { return actions || singleServiceName }
+        Map<String, ParameterItem> getParameterMap() { return parameterByName }
+        boolean hasActionsOrSingleService() { return actions != null }
         boolean getBeginTransaction() { return beginTransaction }
+        boolean isReadOnly() { return readOnly }
 
         boolean checkCondition(ExecutionContext ec) { return condition ? condition.checkCondition(ec) : true }
 
+        void setAllParameters(ScreenUrlInfo screenUrlInfo, ExecutionContext ec) {
+            // get the path parameters
+            if (screenUrlInfo.getExtraPathNameList() && getPathParameterList()) {
+                List<String> pathParameterList = getPathParameterList()
+                int i = 0
+                for (String extraPathName in screenUrlInfo.getExtraPathNameList()) {
+                    if (pathParameterList.size() > i) {
+                        if (ec.getWeb()) ec.getWeb().addDeclaredPathParameter(pathParameterList.get(i), extraPathName)
+                        ec.getContext().put(pathParameterList.get(i), extraPathName)
+                        i++
+                    } else {
+                        break
+                    }
+                }
+            }
+
+            // put parameters in the context
+            if (ec.getWeb()) {
+                // screen parameters
+                for (ParameterItem pi in parentScreen.getParameterMap().values()) {
+                    Object value = pi.getValue(ec)
+                    if (value != null) ec.getContext().put(pi.getName(), value)
+                }
+                // transition parameters
+                for (ParameterItem pi in parameterByName.values()) {
+                    Object value = pi.getValue(ec)
+                    if (value != null) ec.getContext().put(pi.getName(), value)
+                }
+            }
+        }
+
         ResponseItem run(ScreenRenderImpl sri) {
+            ExecutionContext ec = sri.getEc()
+
             // NOTE: if parent screen of transition does not require auth, don't require authz
             // NOTE: use the View authz action to leave it open, ie require minimal authz; restrictions are often more
             //    in the services/etc if/when needed, or specific transitions can have authz settings
-            sri.ec.artifactExecution.push(new ArtifactExecutionInfoImpl(location,
+            ec.getArtifactExecution().push(new ArtifactExecutionInfoImpl(location,
                     "AT_XML_SCREEN_TRANS", "AUTHZA_VIEW"),
                     (!parentScreen.screenNode."@require-authentication" ||
                      parentScreen.screenNode."@require-authentication" == "true"))
 
             boolean loggedInAnonymous = false
             if (parentScreen.screenNode."@require-authentication" == "anonymous-all") {
-                sri.ec.artifactExecution.setAnonymousAuthorizedAll()
-                loggedInAnonymous = sri.ec.getUser().loginAnonymousIfNoUser()
+                ec.artifactExecution.setAnonymousAuthorizedAll()
+                loggedInAnonymous = ec.getUser().loginAnonymousIfNoUser()
             } else if (parentScreen.screenNode."@require-authentication" == "anonymous-view") {
-                sri.ec.artifactExecution.setAnonymousAuthorizedView()
-                loggedInAnonymous = sri.ec.getUser().loginAnonymousIfNoUser()
+                ec.artifactExecution.setAnonymousAuthorizedView()
+                loggedInAnonymous = ec.getUser().loginAnonymousIfNoUser()
             }
 
-            // put parameters in the context
-            if (sri.ec.web) {
-                for (ParameterItem pi in parentScreen.parameterMap.values()) {
-                    Object value = pi.getValue(sri.ec)
-                    if (value) sri.ec.context.put(pi.getName(), value)
-                }
-            }
+            ScreenUrlInfo screenUrlInfo = sri.getScreenUrlInfo()
+            setAllParameters(screenUrlInfo, ec)
 
-            if (!checkCondition(sri.ec)) {
+            if (!checkCondition(ec)) {
                 sri.ec.message.addError("Condition failed for transition [${location}], not running actions or redirecting")
                 if (errorResponse) return errorResponse
                 return defaultResponse
             }
 
             // don't push a map on the context, let the transition actions set things that will remain: sri.ec.context.push()
-            sri.ec.context.put("sri", sri)
-            if (actions) actions.run(sri.ec)
+            ec.getContext().put("sri", sri)
+            if (actions != null) actions.run(ec)
 
             ResponseItem ri = null
             // if there is an error-response and there are errors, we have a winner
-            if (sri.getEc().getMessage().hasError() && errorResponse) ri = errorResponse
+            if (ec.getMessage().hasError() && errorResponse) ri = errorResponse
 
             // check all conditional-response, if condition then return that response
             if (ri == null) for (ResponseItem condResp in conditionalResponseList) {
-                if (condResp.checkCondition(sri.getEc())) ri = condResp
+                if (condResp.checkCondition(ec)) ri = condResp
             }
             // no errors, no conditionals, return default
             if (ri == null) ri = defaultResponse
@@ -387,14 +424,15 @@ class ScreenDefinition {
 
             // all done so pop the artifact info; don't bother making sure this is done on errors/etc like in a finally
             // clause because if there is an error this will help us know how we got there
-            sri.ec.artifactExecution.pop()
-            if (loggedInAnonymous) sri.ec.getUser().logoutAnonymousOnly()
+            ec.getArtifactExecution().pop()
+            if (loggedInAnonymous) ec.getUser().logoutAnonymousOnly()
 
             return ri
         }
     }
 
     static class ResponseItem {
+        protected TransitionItem transitionItem
         protected ScreenDefinition parentScreen
         protected XmlAction condition = null
         protected Map<String, ParameterItem> parameterMap = new HashMap()
@@ -408,6 +446,7 @@ class ScreenDefinition {
         protected boolean saveParameters
 
         ResponseItem(Node responseNode, TransitionItem ti, ScreenDefinition parentScreen) {
+            this.transitionItem = ti
             this.parentScreen = parentScreen
             String location = "${parentScreen.location}.transition_${ti.name}.${responseNode.name().replace("-","_")}"
             if (responseNode."condition" && responseNode."condition"[0].children()) {
@@ -438,14 +477,16 @@ class ScreenDefinition {
         boolean getSaveCurrentScreen() { return saveCurrentScreen }
         boolean getSaveParameters() { return saveParameters }
 
-        Map expandParameters(ExecutionContext ec) {
+        Map expandParameters(ScreenUrlInfo screenUrlInfo, ExecutionContext ec) {
+            transitionItem.setAllParameters(screenUrlInfo, ec)
+
             Map ep = new HashMap()
-            for (ParameterItem pi in parameterMap.values()) ep.put(pi.name, pi.getValue(ec))
+            for (ParameterItem pi in parameterMap.values()) ep.put(pi.getName(), pi.getValue(ec))
             if (parameterMapNameGroovy != null) {
-                Object pm = InvokerHelper.createScript(parameterMapNameGroovy, new ContextBinding(ec.context)).run()
+                Object pm = InvokerHelper.createScript(parameterMapNameGroovy, new ContextBinding(ec.getContext())).run()
                 if (pm && pm instanceof Map) ep.putAll(pm)
             }
-            // logger.info("Expanded response map to url [${url}] to: ${ep}; parameterMapNameGroovy=[${parameterMapNameGroovy}]")
+            // logger.warn("========== Expanded response map to url [${url}] to: ${ep}; parameterMap=${parameterMap}; parameterMapNameGroovy=[${parameterMapNameGroovy}]")
             return ep
         }
     }

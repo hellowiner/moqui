@@ -64,6 +64,8 @@ abstract class EntityFindBase implements EntityFind {
     protected Integer fetchSize = null
     protected Integer maxRows = null
 
+    protected boolean disableAuthz = false
+
     EntityFindBase(EntityFacadeImpl efi, String entityName) {
         this.efi = efi
         this.entityName = entityName
@@ -168,8 +170,7 @@ abstract class EntityFindBase implements EntityFind {
 
     @Override
     EntityFind searchFormInputs(String inputFieldsMapName, String defaultOrderBy, boolean alwaysPaginate) {
-        Map inf = inputFieldsMapName ? (Map) efi.ecfi.executionContext.context[inputFieldsMapName] :
-            (efi.ecfi.executionContext.web ? efi.ecfi.executionContext.web.parameters : efi.ecfi.executionContext.context)
+        Map inf = inputFieldsMapName ? (Map) efi.ecfi.executionContext.context[inputFieldsMapName] : efi.ecfi.executionContext.context
         EntityDefinition ed = getEntityDef()
 
         for (String fn in ed.getAllFieldNames()) {
@@ -228,25 +229,22 @@ abstract class EntityFindBase implements EntityFind {
         String orderByString = inf.get("orderByField") ?: defaultOrderBy
         this.orderBy(orderByString)
 
-        // look for the pageIndex and optional pageSize parameters
-        if (alwaysPaginate || inf.get("pageIndex")) {
+        // look for the pageIndex and optional pageSize parameters; don't set these if should cache as will disable the cached query
+        if ((alwaysPaginate || inf.get("pageIndex")) && !shouldCache()) {
             int pageIndex = (inf.get("pageIndex") ?: 0) as int
             int pageSize = (inf.get("pageSize") ?: (this.limit ?: 20)) as int
-            offset(pageIndex * pageSize)
+            offset(pageIndex, pageSize)
             limit(pageSize)
         }
 
         // if there is a pageNoLimit clear out the limit regardless of other settings
-        if (inf.get("pageNoLimit") == "true") {
+        if (inf.get("pageNoLimit") == "true" || inf.get("pageNoLimit") == true) {
             this.offset = null
             this.limit = null
         }
 
         return this
     }
-
-    int getPageIndex() { return offset == null ? 0 : offset/getPageSize() }
-    int getPageSize() { return limit ?: 20 }
 
     EntityFind findNode(Node node) {
         ExecutionContext ec = this.efi.ecfi.executionContext
@@ -361,6 +359,11 @@ abstract class EntityFindBase implements EntityFind {
     Integer getLimit() { return this.limit }
 
     @Override
+    int getPageIndex() { return offset == null ? 0 : offset/getPageSize() }
+    @Override
+    int getPageSize() { return limit ?: 20 }
+
+    @Override
     EntityFind forUpdate(boolean forUpdate) { this.forUpdate = forUpdate; return this }
     @Override
     boolean getForUpdate() { return this.forUpdate }
@@ -415,7 +418,8 @@ abstract class EntityFindBase implements EntityFind {
 
     protected boolean shouldCache() {
         if (this.dynamicView) return false
-        if (this.limit != null || this.offset) return false
+        if (this.havingEntityCondition != null) return false
+        if (this.limit != null || this.offset != null) return false
         if (this.useCache != null && !this.useCache) return false
         String entityCache = this.getEntityDef().getEntityNode()."@use-cache"
         return ((this.useCache == Boolean.TRUE && entityCache != "never") || entityCache == "true")
@@ -428,19 +432,28 @@ abstract class EntityFindBase implements EntityFind {
                 "OFFSET [${offset}] LIMIT [${limit}] FOR UPDATE [${forUpdate}]"
     }
 
-    // ======================== Abstract Methods ========================
+    // ======================== Find and Abstract Methods ========================
+
+    EntityFind disableAuthz() { disableAuthz = true; return this }
+
     abstract EntityDynamicView makeEntityDynamicView()
 
     @Override
     EntityValue one() throws EntityException {
-        if (this.dynamicView) {
-            throw new IllegalArgumentException("Dynamic View not supported for 'one' find.")
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return oneInternal()
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
         }
+    }
+    protected EntityValue oneInternal() throws EntityException {
+        if (this.dynamicView) throw new IllegalArgumentException("Dynamic View not supported for 'one' find.")
 
         long startTime = System.currentTimeMillis()
         EntityDefinition ed = this.getEntityDef()
         Node entityNode = ed.getEntityNode()
-        ExecutionContext ec = efi.ecfi.getExecutionContext()
+        ExecutionContext ec = efi.getEcfi().getExecutionContext()
 
         if (ed.isViewEntity() && (!entityNode."member-entity" || !entityNode."alias"))
             throw new EntityException("Cannot do find for view-entity with name [${entityName}] because it has no member entities or no aliased fields.")
@@ -532,14 +545,23 @@ abstract class EntityFindBase implements EntityFind {
 
         return newEntityValue
     }
+
     abstract EntityValueBase oneExtended(EntityConditionImplBase whereCondition) throws EntityException
 
     @Override
     EntityList list() throws EntityException {
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return listInternal()
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
+        }
+    }
+    protected EntityList listInternal() throws EntityException {
         long startTime = System.currentTimeMillis()
         EntityDefinition ed = this.getEntityDef()
         Node entityNode = ed.getEntityNode()
-        ExecutionContext ec = efi.ecfi.executionContext
+        ExecutionContext ec = efi.getEcfi().getExecutionContext()
 
         if (ed.isViewEntity() && (!entityNode."member-entity" || !entityNode."alias"))
             throw new EntityException("Cannot do find for view-entity with name [${entityName}] because it has no member entities or no aliased fields.")
@@ -563,7 +585,7 @@ abstract class EntityFindBase implements EntityFind {
         EntityListImpl txcEli = txCache != null ? txCache.listGet(ed, whereCondition, orderByExpanded) : null
 
         // NOTE: don't cache if there is a having condition, for now just support where
-        boolean doEntityCache = !this.havingEntityCondition && this.shouldCache()
+        boolean doEntityCache = this.shouldCache()
         CacheImpl entityListCache = doEntityCache ? efi.getEntityCache().getCacheList(getEntityDef().getFullEntityName()) : null
         EntityList cacheList = null
         if (doEntityCache) cacheList = efi.getEntityCache().getFromListCache(ed, whereCondition, orderByExpanded, entityListCache)
@@ -632,10 +654,18 @@ abstract class EntityFindBase implements EntityFind {
 
     @Override
     EntityListIterator iterator() throws EntityException {
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return iteratorInternal()
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
+        }
+    }
+    protected EntityListIterator iteratorInternal() throws EntityException {
         long startTime = System.currentTimeMillis()
         EntityDefinition ed = this.getEntityDef()
         Node entityNode = ed.getEntityNode()
-        ExecutionContext ec = efi.ecfi.executionContext
+        ExecutionContext ec = efi.getEcfi().getExecutionContext()
 
         if (ed.isViewEntity() && (!entityNode."member-entity" || !entityNode."alias"))
             throw new EntityException("Cannot do find for view-entity with name [${entityName}] because it has no member entities or no aliased fields.")
@@ -707,10 +737,18 @@ abstract class EntityFindBase implements EntityFind {
 
     @Override
     long count() throws EntityException {
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return countInternal()
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
+        }
+    }
+    protected long countInternal() throws EntityException {
         long startTime = System.currentTimeMillis()
         EntityDefinition ed = this.getEntityDef()
         Node entityNode = ed.getEntityNode()
-        ExecutionContext ec = efi.ecfi.executionContext
+        ExecutionContext ec = efi.getEcfi().getExecutionContext()
 
         ec.getArtifactExecution().push(
                 new ArtifactExecutionInfoImpl(ed.getFullEntityName(), "AT_ENTITY", "AUTHZA_VIEW").setActionDetail("count"),
@@ -771,6 +809,14 @@ abstract class EntityFindBase implements EntityFind {
 
     @Override
     long updateAll(Map<String, ?> fieldsToSet) {
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return updateAllInternal(fieldsToSet)
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
+        }
+    }
+    protected long updateAllInternal(Map<String, ?> fieldsToSet) {
         // NOTE: this code isn't very efficient, but will do the trick and cause all EECAs to be fired
         // NOTE: consider expanding this to do a bulk update in the DB if there are no EECAs for the entity
 
@@ -798,6 +844,14 @@ abstract class EntityFindBase implements EntityFind {
 
     @Override
     long deleteAll() {
+        boolean enableAuthz = disableAuthz ? !efi.getEcfi().getExecutionContext().getArtifactExecution().disableAuthz() : false
+        try {
+            return deleteAllInternal()
+        } finally {
+            if (enableAuthz) efi.getEcfi().getExecutionContext().getArtifactExecution().enableAuthz()
+        }
+    }
+    protected long deleteAllInternal() {
         // NOTE: this code isn't very efficient (though eli.remove() is a little bit more), but will do the trick and cause all EECAs to be fired
 
         if (getEntityDef().createOnly()) throw new EntityException("Entity [${getEntityDef().getFullEntityName()}] is create-only (immutable), cannot be deleted.")

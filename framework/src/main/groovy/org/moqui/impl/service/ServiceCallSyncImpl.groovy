@@ -35,6 +35,7 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
     /* not supported by Atomikos/etc right now, consider for later: protected int transactionIsolation = -1 */
 
     protected boolean multi = false
+    protected boolean disableAuthz = false
 
     ServiceCallSyncImpl(ServiceFacadeImpl sfi) {
         super(sfi)
@@ -61,6 +62,9 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
     @Override
     ServiceCallSync multi(boolean mlt) { this.multi = mlt; return this }
 
+    @Override
+    ServiceCallSync disableAuthz() { disableAuthz = true; return this }
+
     /* not supported by Atomikos/etc right now, consider for later:
     @Override
     ServiceCallSync transactionIsolation(int ti) { this.transactionIsolation = ti; return this }
@@ -68,8 +72,8 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
 
     @Override
     Map<String, Object> call() {
-        ServiceDefinition sd = sfi.getServiceDefinition(getServiceName())
-        ExecutionContextImpl eci = (ExecutionContextImpl) sfi.ecfi.executionContext
+        ServiceDefinition sd = getServiceDefinition()
+        ExecutionContextImpl eci = (ExecutionContextImpl) sfi.getEcfi().getExecutionContext()
 
         Collection<String> inParameterNames = null
         if (sd != null) {
@@ -79,50 +83,49 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
             if (ed != null) inParameterNames = ed.getAllFieldNames()
         }
 
-        if (multi) {
-            // run all service calls in a single transaction for multi form submits, ie all succeed or fail together
-            boolean beganTransaction = eci.getTransaction().begin(null)
-            try {
-                for (int i = 0; ; i++) {
-                    if ((parameters.get("_useRowSubmit") == "true" || parameters.get("_useRowSubmit_" + i) == "true")
-                            && parameters.get("_rowSubmit_" + i) != "true") continue
-                    Map<String, Object> currentParms = new HashMap()
-                    for (String ipn in inParameterNames) {
-                        String key = ipn + "_" + i
-                        if (parameters.containsKey(key)) currentParms.put(ipn, parameters.get(key))
+        boolean enableAuthz = disableAuthz ? !eci.getArtifactExecution().disableAuthz() : false
+        try {
+            if (multi) {
+                // run all service calls in a single transaction for multi form submits, ie all succeed or fail together
+                boolean beganTransaction = eci.getTransaction().begin(null)
+                try {
+                    for (int i = 0; ; i++) {
+                        if ((parameters.get("_useRowSubmit") == "true" || parameters.get("_useRowSubmit_" + i) == "true")
+                                && parameters.get("_rowSubmit_" + i) != "true") continue
+                        Map<String, Object> currentParms = new HashMap()
+                        for (String ipn in inParameterNames) {
+                            String key = ipn + "_" + i
+                            if (parameters.containsKey(key)) currentParms.put(ipn, parameters.get(key))
+                        }
+                        // if the map stayed empty we have no parms, so we're done
+                        if (currentParms.size() == 0) break
+                        // now that we have checked the per-row parameters, add in others available
+                        for (String ipn in inParameterNames) {
+                            if (!currentParms.get(ipn) && parameters.get(ipn)) currentParms.put(ipn, parameters.get(ipn))
+                        }
+                        // call the service, ignore the result...
+                        callSingle(currentParms, sd, eci)
+                        // ... and break if there are any errors
+                        if (eci.getMessage().hasError()) break
                     }
-                    // if the map stayed empty we have no parms, so we're done
-                    if (currentParms.size() == 0) break
-                    // now that we have checked the per-row parameters, add in others available
-                    for (String ipn in inParameterNames) {
-                        if (!currentParms.get(ipn) && parameters.get(ipn)) currentParms.put(ipn, parameters.get(ipn))
+                } catch (Throwable t) {
+                    eci.getTransaction().rollback(beganTransaction, "Uncaught error running service [${sd.getServiceName()}] in multi mode", t)
+                    throw t
+                } finally {
+                    if (eci.getTransaction().isTransactionInPlace()) {
+                        if (eci.getMessage().hasError()) {
+                            eci.getTransaction().rollback(beganTransaction, "Error message found running service [${sd.getServiceName()}] in multi mode", null)
+                        } else {
+                            eci.getTransaction().commit(beganTransaction)
+                        }
                     }
-                    // call the service, ignore the result...
-                    callSingle(currentParms, sd, eci)
-                    // ... and break if there are any errors
-                    if (eci.getMessage().hasError()) break
                 }
-            } catch (Throwable t) {
-                eci.getTransaction().rollback(beganTransaction, "Uncaught error running service [${sd.getServiceName()}] in multi mode", t)
-                throw t
-            } finally {
-                if (eci.getTransaction().isTransactionInPlace()) {
-                    if (eci.getMessage().hasError()) {
-                        eci.getTransaction().rollback(beganTransaction, "Error message found running service [${sd.getServiceName()}] in multi mode", null)
-                    } else {
-                        eci.getTransaction().commit(beganTransaction)
-                    }
-                }
+            } else {
+                return callSingle(this.parameters, sd, eci)
             }
-        } else {
-            return callSingle(this.parameters, sd, eci)
+        } finally {
+            if (enableAuthz) eci.getArtifactExecution().enableAuthz()
         }
-    }
-
-    protected boolean isEntityAutoPattern() {
-        // if no path, verb is create|update|delete and noun is a valid entity name, do an implicit entity-auto
-        return !path && ("create".equals(verb) || "update".equals(verb) || "delete".equals(verb) || "store".equals(verb)) &&
-                sfi.getEcfi().getEntityFacade().getEntityDefinition(noun) != null
     }
 
     Map<String, Object> callSingle(Map<String, Object> currentParameters, ServiceDefinition sd, ExecutionContextImpl eci) {
@@ -242,12 +245,15 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
                 checkAddSemaphore(sd, eci)
 
                 sfi.runSecaRules(getServiceName(), currentParameters, null, "pre-service")
-                sfi.registerTxSecaRules(getServiceName(), currentParameters)
 
                 if (logger.traceEnabled) logger.trace("Calling service [${getServiceName()}] pre-call input: ${currentParameters}")
 
-                // run the service through the ServiceRunner
-                result = sr.runService(sd, currentParameters)
+                try {
+                    // run the service through the ServiceRunner
+                    result = sr.runService(sd, currentParameters)
+                } finally {
+                    sfi.registerTxSecaRules(getServiceName(), currentParameters, result)
+                }
 
                 sfi.runSecaRules(getServiceName(), currentParameters, result, "post-service")
                 // if we got any errors added to the message list in the service, rollback for that too
@@ -277,7 +283,18 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
                             .parameters([serviceName:getServiceName()]).requireNewTransaction(true).call()
                 }
 
-                if (beganTransaction && tf.isTransactionInPlace()) tf.commit()
+                try {
+                    if (beganTransaction && tf.isTransactionInPlace()) tf.commit()
+                } catch (Throwable t) {
+                    logger.warn("Error committing transaction for service [${getServiceName()}]", t)
+                    // add all exception messages to the error messages list
+                    eci.getMessage().addError(t.getMessage())
+                    Throwable parent = t.getCause()
+                    while (parent != null) {
+                        eci.getMessage().addError(parent.getMessage())
+                        parent = parent.getCause()
+                    }
+                }
                 sfi.runSecaRules(getServiceName(), currentParameters, result, "post-commit")
             }
         } catch (TransactionException e) {
@@ -364,14 +381,17 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
             boolean beganTransaction = tf.begin(null)
             try {
                 sfi.runSecaRules(getServiceName(), currentParameters, null, "pre-service")
-                sfi.registerTxSecaRules(getServiceName(), currentParameters)
 
-                EntityDefinition ed = sfi.getEcfi().getEntityFacade().getEntityDefinition(noun)
-                switch (verb) {
-                    case "create": EntityAutoServiceRunner.createEntity(sfi, ed, currentParameters, result, null); break
-                    case "update": EntityAutoServiceRunner.updateEntity(sfi, ed, currentParameters, result, null, null); break
-                    case "delete": EntityAutoServiceRunner.deleteEntity(sfi, ed, currentParameters); break
-                    case "store": EntityAutoServiceRunner.storeEntity(sfi, ed, currentParameters, result, null); break
+                try {
+                    EntityDefinition ed = sfi.getEcfi().getEntityFacade().getEntityDefinition(noun)
+                    switch (verb) {
+                        case "create": EntityAutoServiceRunner.createEntity(sfi, ed, currentParameters, result, null); break
+                        case "update": EntityAutoServiceRunner.updateEntity(sfi, ed, currentParameters, result, null, null); break
+                        case "delete": EntityAutoServiceRunner.deleteEntity(sfi, ed, currentParameters); break
+                        case "store": EntityAutoServiceRunner.storeEntity(sfi, ed, currentParameters, result, null); break
+                    }
+                } finally {
+                    sfi.registerTxSecaRules(getServiceName(), currentParameters, result)
                 }
 
                 sfi.runSecaRules(getServiceName(), currentParameters, result, "post-service")
@@ -390,7 +410,18 @@ class ServiceCallSyncImpl extends ServiceCallImpl implements ServiceCallSync {
                     parent = parent.getCause()
                 }
             } finally {
-                if (beganTransaction && tf.isTransactionInPlace()) tf.commit()
+                try {
+                    if (beganTransaction && tf.isTransactionInPlace()) tf.commit()
+                } catch (Throwable t) {
+                    logger.warn("Error committing transaction for entity-auto service [${getServiceName()}]", t)
+                    // add all exception messages to the error messages list
+                    eci.getMessage().addError(t.getMessage())
+                    Throwable parent = t.getCause()
+                    while (parent != null) {
+                        eci.getMessage().addError(parent.getMessage())
+                        parent = parent.getCause()
+                    }
+                }
                 sfi.runSecaRules(getServiceName(), currentParameters, result, "post-commit")
             }
         } catch (TransactionException e) {

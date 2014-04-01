@@ -217,6 +217,7 @@ public class ResourceFacadeImpl implements ResourceFacade {
         return rr.openStream()
     }
 
+    @Override
     String getLocationText(String location, boolean cache) {
         if (cache && textLocationCache.containsKey(location)) return (String) textLocationCache.get(location)
         InputStream locStream = getLocationStream(location)
@@ -392,7 +393,7 @@ public class ResourceFacadeImpl implements ResourceFacade {
             this.scriptGroovyExpressionCache.put(expression, groovyClass)
         }
         // NOTE: consider keeping the binding somewhere, like in the ExecutionContext to avoid creating repeatedly
-        Script script = InvokerHelper.createScript(groovyClass, new ContextBinding(ecfi.executionContext.context))
+        Script script = InvokerHelper.createScript(groovyClass, new ContextBinding(getEcfi().getExecutionContext().getContext()))
         return script
     }
 

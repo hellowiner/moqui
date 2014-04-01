@@ -10,7 +10,7 @@ this Work and assume any risks associated with your use of this Work.
 This Work includes contributions authored by David E. Jones, not as a
 "work for hire", who hereby disclaims any copyright to the same.
 -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-1.3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-1.4.xsd">
 
     <!-- ========================================================= -->
     <!-- moqui.tenant -->
@@ -26,19 +26,6 @@ This Work includes contributions authored by David E. Jones, not as a
         <field name="defaultLocale" type="text-short"/>
         <field name="defaultTimeZone" type="text-medium"/>
         <field name="defaultCountryGeoId" type="id"/>
-
-        <!-- Email Defaults -->
-        <field name="emailOutgoingEnabled" type="text-indicator"/>
-        <field name="emailOutgoingFromAddress" type="text-medium"/>
-        <field name="emailOutgoingRedirectAddr" type="text-medium">
-            <description>For testing purposes. If an email address is specified here all outgoing email will go to this address only.</description>
-        </field>
-        <field name="emailSmtpRelayHost" type="text-medium"/>
-        <field name="emailSmtpAuthUsername" type="text-medium"/>
-        <field name="emailSmtpAuthPassword" type="text-medium"/>
-        <field name="emailSmtpPort" type="text-short"/>
-        <field name="emailSmtpStartTls" type="text-indicator"/>
-        <field name="emailSmtpAllowNonSecure" type="text-indicator"/>
     </entity>
     <entity entity-name="TenantCurrency" package-name="moqui.tenant" group-name="tenantcommon">
         <description>Each record represents a Currency UOM to be available to the tenant.
@@ -47,6 +34,7 @@ This Work includes contributions authored by David E. Jones, not as a
         <field name="currencyUomId" type="id" is-pk="true"/>
         <relationship type="one" related-entity-name="moqui.tenant.Tenant"/>
     </entity>
+    <!-- on reconsideration, this probably won't be useful:
     <entity entity-name="TenantEmail" package-name="moqui.tenant" group-name="tenantcommon">
         <field name="tenantId" type="id" is-pk="true"/>
         <field name="emailTypeEnumId" type="id" is-pk="true"/>
@@ -59,6 +47,7 @@ This Work includes contributions authored by David E. Jones, not as a
         </relationship>
         <relationship type="one-nofk" related-entity-name="moqui.basic.email.EmailTemplate"/>
     </entity>
+    -->
     <entity entity-name="TenantLocale" package-name="moqui.tenant" group-name="tenantcommon">
         <description>Each record represents a Locale to be available to the tenant.
             If no records are present all system locales will be available.</description>

@@ -67,13 +67,14 @@ if (emailTemplate.bccAddresses) {
 
 // prepare and set the html message
 def bodyRender = ec.screen.makeRender().rootScreen(emailTemplate.bodyScreenLocation)
-                                       .webappName(emailTemplate.webappName).renderMode("html")
+        .webappName(emailTemplate.webappName).renderMode("html")
 String bodyHtml = bodyRender.render()
 email.setHtmlMsg(bodyHtml)
 
 // set the alternative plain text message
 // render screen with renderMode=text for this
-def bodyTextRender = ec.screen.makeRender().rootScreen(emailTemplate.bodyScreenLocation).renderMode("text")
+def bodyTextRender = ec.screen.makeRender().rootScreen(emailTemplate.bodyScreenLocation)
+        .webappName(emailTemplate.webappName).renderMode("text")
 String bodyText = bodyTextRender.render()
 email.setTextMsg(bodyText)
 //email.setTextMsg("Your email client does not support HTML messages")
@@ -105,13 +106,13 @@ if (createEmailMessage) {
     Map cemParms = [sentDate:ec.user.nowTimestamp, subject:subject, body:bodyHtml,
             fromAddress:emailTemplate.fromAddress, toAddresses:toAddresses,
             ccAddresses:emailTemplate.ccAddresses, bccAddresses:emailTemplate.bccAddresses,
-            contentType:"text/html", emailTemplateId:emailTemplateId, fromUserId:ec.user.userId]
+            contentType:"text/html", emailTemplateId:emailTemplateId, fromUserId:ec.user?.userId]
     ec.artifactExecution.disableAuthz()
     ec.service.sync().name("create", "moqui.basic.email.EmailMessage").parameters(cemParms).call()
     ec.artifactExecution.enableAuthz()
 }
 
-logger.info("Sending [${email}] email from template [${emailTemplateId}] with bodyHtml [${bodyHtml}] bodyText [${bodyText}]")
+logger.info("Sending [${email}] email from template [${emailTemplateId}] with bodyHtml:\n${bodyHtml}\n bodyText:\n${bodyText}")
 
 // send the email
 email.send()

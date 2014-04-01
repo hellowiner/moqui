@@ -34,6 +34,7 @@ class StupidUtilities {
         if (theClass == null) throw new IllegalArgumentException("Cannot find class for type: ${javaType}")
         return theClass.isInstance(theObjectInQuestion)
     }
+
     static Object basicConvert(Object value, String javaType) {
         if (value == null) return null
 
@@ -52,6 +53,19 @@ class StupidUtilities {
             logger.warn("Error doing type conversion to [${javaType}] for value [${value}]", t)
             return value
         }
+    }
+
+    static String toPlainString(Object obj) {
+        if (obj == null) return ""
+        // BigDecimal toString() uses scientific notation, annoying, so use toPlainString()
+        if (obj instanceof BigDecimal) return ((BigDecimal) obj).toPlainString()
+        // handle the special case of timestamps used for primary keys, make sure we avoid TZ, etc problems
+        if (obj instanceof Timestamp) return ((Timestamp) obj).getTime().toString()
+        if (obj instanceof java.sql.Date) return ((java.sql.Date) obj).getTime().toString()
+        if (obj instanceof Time) return ((Time) obj).getTime().toString()
+
+        // no special case? do a simple toString()
+        return obj.toString()
     }
 
     static final boolean compareLike(Object value1, Object value2) {
@@ -341,6 +355,16 @@ class StupidUtilities {
         return outMap
     }
 
+    /** Removes entries with a null value from the Map, returns the passed in Map for convenience (does not clone before removes!). */
+    static Map removeNullsFromMap(Map theMap) {
+        Iterator<Map.Entry> iterator = theMap.entrySet().iterator()
+        while (iterator.hasNext()) {
+            Map.Entry entry = iterator.next()
+            if (entry.getValue() == null) iterator.remove()
+        }
+        return theMap
+    }
+
     static Node deepCopyNode(Node original) { return deepCopyNode(original, null) }
     static Node deepCopyNode(Node original, Node parent) {
         // always pass in a null parent and expect this to be appended to the parent node by the caller if desired
@@ -415,6 +439,17 @@ class StupidUtilities {
             if (badChars.contains(curChar as String)) newValue.replace(i, i+1, "_")
         }
         return newValue.toString()
+    }
+
+    static String toStringCleanBom(byte[] bytes) {
+        // NOTE: this only supports UTF-8 for now!
+        if (!bytes) return ""
+        // UTF-8 BOM = 239, 187, 191
+        if (bytes[0] == (byte) 239) {
+            return new String(bytes, 3, bytes.length - 3, "UTF-8")
+        } else {
+            return new String(bytes, "UTF-8")
+        }
     }
 
     static String paddedNumber(long number, Integer desiredLength) {

@@ -104,6 +104,9 @@ abstract class EntityValueBase implements EntityValue {
     boolean isMutable() { return mutable }
 
     @Override
+    Map getMap() { return new HashMap(valueMap) }
+
+    @Override
     Object get(String name) {
         EntityDefinition ed = getEntityDefinition()
 
@@ -248,7 +251,11 @@ abstract class EntityValueBase implements EntityValue {
 
     byte[] getBytes(String name) {
         Object o = this.get(name)
-        if (o instanceof SerialBlob) return ((SerialBlob) o).getBytes(1, (int) o.length())
+        if (o == null) return null
+        if (o instanceof SerialBlob) {
+            if (((SerialBlob) o).length() == 0) return new byte[0]
+            return ((SerialBlob) o).getBytes(1, (int) o.length())
+        }
         if (o instanceof byte[]) return o
         // try groovy...
         return o as byte[]
@@ -260,6 +267,7 @@ abstract class EntityValueBase implements EntityValue {
 
     SerialBlob getSerialBlob(String name) {
         Object o = this.get(name)
+        if (o == null) return null
         if (o instanceof SerialBlob) return o
         if (o instanceof byte[]) return new SerialBlob((byte[]) o)
         // try groovy...
@@ -712,7 +720,7 @@ abstract class EntityValueBase implements EntityValue {
     boolean isEmpty() { return valueMap.isEmpty() }
 
     @Override
-    boolean containsKey(Object o) { return o instanceof String ? getEntityDefinition().isField((String) o) : false }
+    boolean containsKey(Object o) { return o instanceof String ? valueMap.containsKey((String) o) : false }
 
     @Override
     boolean containsValue(Object o) { return values().contains(o) }
@@ -808,7 +816,13 @@ abstract class EntityValueBase implements EntityValue {
 
     abstract EntityValue cloneValue();
 
-    // =========== The abstract methods ===========
+    // =========== The CrUD and abstract methods ===========
+
+    boolean doDataFeed() {
+        // skip ArtifactHitBin, causes funny recursion
+        return this.getEntityDefinition().getFullEntityName() != "moqui.server.ArtifactHitBin"
+    }
+
     @Override
     EntityValue create() {
         long startTime = System.currentTimeMillis()
@@ -827,7 +841,7 @@ abstract class EntityValueBase implements EntityValue {
             this.set("lastUpdatedStamp", new Timestamp(lastUpdatedLong))
 
         // do this before the db change so modified flag isn't cleared
-        getEntityFacadeImpl().getEntityDataFeed().dataFeedCheckAndRegister(this, false, valueMap, null)
+        if (doDataFeed()) getEntityFacadeImpl().getEntityDataFeed().dataFeedCheckAndRegister(this, false, valueMap, null)
 
         ListOrderedSet fieldList = new ListOrderedSet()
         for (String fieldName in ed.getFieldNames(true, true, false)) if (valueMap.containsKey(fieldName)) fieldList.add(fieldName)
@@ -909,7 +923,8 @@ abstract class EntityValueBase implements EntityValue {
         // it may be that the oldValues map is full of null values because the EntityValue didn't come from the db
         if (dbValueMap) for (Object val in dbValueMap.values()) if (val != null) { dbValueMapFromDb = true; break }
 
-        List entityInfoList = getEntityFacadeImpl().getEntityDataFeed().getDataFeedEntityInfoList(ed.getFullEntityName())
+        List entityInfoList = doDataFeed() ? getEntityFacadeImpl().getEntityDataFeed().getDataFeedEntityInfoList(ed.getFullEntityName()) : []
+
         EntityValueImpl refreshedValue = null
         if (ed.needsAuditLog() || entityInfoList || ed.getEntityNode()."@optimistic-lock" == "true") {
             refreshedValue = (EntityValueImpl) this.clone()

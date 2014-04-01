@@ -13,6 +13,7 @@ package org.moqui.impl.context
 
 import org.moqui.BaseException
 import org.moqui.context.NotificationMessage
+import org.moqui.entity.EntityCondition
 
 import java.sql.Timestamp
 import javax.servlet.http.Cookie
@@ -160,16 +161,20 @@ class UserFacadeImpl implements UserFacade {
                         }
                     }
                 }
+                if (cookieVisitorId) {
+                    // make sure the Visitor record actually exists, if not act like we got no moqui.visitor cookie
+                    EntityValue visitor = eci.entity.makeFind("moqui.server.Visitor").condition("visitorId", cookieVisitorId).disableAuthz().one()
+                    if (visitor == null) {
+                        logger.info("Got invalid visitorId [${cookieVisitorId}] in moqui.visitor cookie in session [${session.id}], throwing away and making a new one")
+                        cookieVisitorId = null
+                    }
+                }
                 if (!cookieVisitorId) {
                     // NOTE: disable authz for this call, don't normally want to allow create of Visitor, but this is a special case
-                    boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-                    try {
-                        Map cvResult = eci.service.sync().name("create", "moqui.server.Visitor").parameter("createdDate", getNowTimestamp()).call()
-                        cookieVisitorId = cvResult?.visitorId
-                        logger.info("Created new Visitor with ID [${cookieVisitorId}] in session [${session.id}]")
-                    } finally {
-                        if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
-                    }
+                    Map cvResult = eci.service.sync().name("create", "moqui.server.Visitor")
+                            .parameter("createdDate", getNowTimestamp()).disableAuthz().call()
+                    cookieVisitorId = cvResult?.visitorId
+                    logger.info("Created new Visitor with ID [${cookieVisitorId}] in session [${session.id}]")
                 }
                 if (cookieVisitorId) {
                     // whether it existed or not, add it again to keep it fresh; stale cookies get thrown away
@@ -211,18 +216,14 @@ class UserFacadeImpl implements UserFacade {
                 if (cookieVisitorId) parameters.visitorId = cookieVisitorId
 
                 // NOTE: disable authz for this call, don't normally want to allow create of Visit, but this is special case
-                boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-                try {
-                    Map visitResult = eci.service.sync().name("create", "moqui.server.Visit").parameters(parameters).call()
+                    Map visitResult = eci.service.sync().name("create", "moqui.server.Visit").parameters(parameters)
+                            .disableAuthz().call()
                     // put visitId in session as "moqui.visitId"
                     if (visitResult) {
                         session.setAttribute("moqui.visitId", visitResult.visitId)
                         this.visitId = visitResult.visitId
                         logger.info("Created new Visit with ID [${this.visitId}] in session [${session.id}]")
                     }
-                } finally {
-                    if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
-                }
             }
         }
     }
@@ -334,14 +335,20 @@ class UserFacadeImpl implements UserFacade {
     String getPreference(String preferenceKey) {
         String userId = getUserId()
         if (!userId) return null
-        boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-        try {
-            EntityValue up = eci.getEntity().makeFind("moqui.security.UserPreference").condition("userId", getUserId())
-                    .condition("preferenceKey", preferenceKey).useCache(true).one()
-            return up ? up.preferenceValue : null
-        } finally {
-            if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
+        return getPreference(preferenceKey, userId)
+    }
+
+    String getPreference(String preferenceKey, String userId) {
+        EntityValue up = eci.getEntity().makeFind("moqui.security.UserPreference").condition("userId", userId)
+                .condition("preferenceKey", preferenceKey).useCache(true).disableAuthz().one()
+        if (up == null) {
+            // try UserGroupPreference
+            EntityList ugpList = eci.getEntity().makeFind("moqui.security.UserGroupPreference")
+                    .condition("userGroupId", EntityCondition.IN, getUserGroupIdSet(userId))
+                    .condition("preferenceKey", preferenceKey).useCache(true).disableAuthz().list()
+            if (ugpList) up = ugpList.first
         }
+        return up?.preferenceValue
     }
 
     @Override
@@ -372,6 +379,10 @@ class UserFacadeImpl implements UserFacade {
 
     @Override
     boolean loginUser(String username, String password, String tenantId) {
+        if (!username) {
+            eci.message.addError("No username specified")
+            return false
+        }
         if (tenantId) {
             eci.changeTenant(tenantId)
             this.visitId = null
@@ -482,19 +493,20 @@ class UserFacadeImpl implements UserFacade {
     Set<String> getUserGroupIdSet() {
         // first get the groups the user is in (cached), always add the "ALL_USERS" group to it
         if (usernameStack.size() == 0) return allUserGroupIdOnly
-        if (internalUserGroupIdSet == null) {
-            internalUserGroupIdSet = new HashSet(allUserGroupIdOnly)
-            boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-            try {
-                // expand the userGroupId Set with UserGroupMember
-                for (EntityValue userGroupMember in eci.getEntity().makeFind("moqui.security.UserGroupMember")
-                        .condition("userId", userId).useCache(true).list().filterByDate(null, null, null))
-                    internalUserGroupIdSet.add((String) userGroupMember.userGroupId)
-            } finally {
-                if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
-            }
-        }
+        if (internalUserGroupIdSet == null) internalUserGroupIdSet = getUserGroupIdSet(getUserId())
         return internalUserGroupIdSet
+    }
+
+    Set<String> getUserGroupIdSet(String userId) {
+        Set<String> groupIdSet = new HashSet(allUserGroupIdOnly)
+        if (userId) {
+            // expand the userGroupId Set with UserGroupMember
+            EntityList ugmList = eci.getEntity().makeFind("moqui.security.UserGroupMember").condition("userId", userId)
+                    .useCache(true).disableAuthz().list().filterByDate(null, null, null)
+            for (EntityValue userGroupMember in ugmList) groupIdSet.add((String) userGroupMember.userGroupId)
+        }
+
+        return groupIdSet
     }
 
     EntityList getArtifactTarpitCheckList() {
@@ -533,13 +545,8 @@ class UserFacadeImpl implements UserFacade {
     EntityValue getUserAccount() {
         if (this.usernameStack.size() == 0) return null
         if (internalUserAccount == null) {
-            boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-            try {
-                internalUserAccount = eci.getEntity().makeFind("moqui.security.UserAccount")
-                        .condition("username", this.getUsername()).useCache(false).one()
-            } finally {
-                if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
-            }
+            internalUserAccount = eci.getEntity().makeFind("moqui.security.UserAccount")
+                    .condition("username", this.getUsername()).useCache(false).disableAuthz().one()
         }
         // logger.info("Got UserAccount [${internalUserAccount}] with userIdStack [${userIdStack}]")
         return internalUserAccount
@@ -554,14 +561,7 @@ class UserFacadeImpl implements UserFacade {
     @Override
     EntityValue getVisit() {
         if (!visitId) return null
-
-        EntityValue vst = null
-        boolean alreadyDisabled = eci.getArtifactExecution().disableAuthz()
-        try {
-            vst = eci.getEntity().makeFind("moqui.server.Visit").condition("visitId", visitId).useCache(true).one()
-        } finally {
-            if (!alreadyDisabled) eci.getArtifactExecution().enableAuthz()
-        }
+        EntityValue vst = eci.getEntity().makeFind("moqui.server.Visit").condition("visitId", visitId).useCache(true).disableAuthz().one()
         return vst
     }
 

@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- No copyright or license for configuration file, details here are not considered a creative work. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-1.3.xsd">
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-1.4.xsd">
 
-    <server-stats>
+    <tools enable-elasticsearch="true" enable-camel="false"/>
+
+    <server-stats stats-skip-condition="ec.web?.request?.pathInfo?.startsWith('/rpc') || ec.web?.request?.pathInfo?.startsWith('/status')">
         <artifact-stats type="screen" persist-bin="true" persist-hit="true"/>
         <artifact-stats type="screen-content" persist-bin="true" persist-hit="true"/>
         <artifact-stats type="transition" persist-bin="true" persist-hit="true"/>
@@ -19,10 +21,12 @@
 
     <screen-facade boundary-comments="true"/>
 
-    <entity-facade crypt-pass="MoquiDefaultPassword:CHANGEME"/>
+    <entity-facade crypt-pass="MoquiDefaultPassword:CHANGEME">
+        <!-- add datasource elements here to configure databases -->
+    </entity-facade>
 
     <repository-list>
-        <repository name="main" location="http://localhost:8081/rmi" type="rmi" workspace="staging"
-                    username="admin" password="admin"/>
+        <!-- <repository name="main" location="http://localhost:8081/rmi" type="rmi" workspace="staging"
+                    username="admin" password="admin"/> -->
     </repository-list>
 </moqui-conf>

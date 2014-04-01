@@ -2,29 +2,124 @@
 Moqui Framework Release Notes
 
 ===========================================================================
-Release 1.3.3 - TBD
+Release 1.4.1 - TBD
 ===========================================================================
 
-Moqui Framework 1.3.3 is a minor new feature and bug fix release.
+Moqui Framework 1.4.1 is a minor new feature and bug fix release.
 
 New Features:
 
+- Added UserGroupPreference, like UserPreference but for user groups.
+  UserFacade.getPreference() now looks for group preference if no user
+  preference is found.
+- Changed Service ECA rules with @when of tx-commit or tx-rollback to
+  attach to the transaction after the service is run so that results are
+  available
+
+Bug Fixes:
+
+- Changed commit() to rollback if commit fails to cleanup the transaction,
+  can happen for example with TransactionCache has a DB error during
+  pre-commit
+- ArtifactHit count now skipped for UserAccount to avoid infinite recursion
+  (shows as a StackOverflow exception)
+- EntityValue.containsKey() now returns true if there is a value for the
+  key (even null), not just if it is a valid field name; this was
+  inconvenient for various things, especially when treating EntityValue
+  like a Map
+- Fixed issue where Service ECA rules with @when of tx-commit or
+  tx-rollback were never run
+
+===========================================================================
+Release 1.4.0 - 21 Mar 2014
+===========================================================================
+
+Moqui Framework 1.4.0 is a major new feature and bug fix release.
+
+Significant new features include: incorporating the Metis Admin Template,
+adding Twitter Bootstrap and updating jQuery/jQueryUI, added Bitronix
+transaction manager and pluggable JTA implementation support, added JBoss
+KIE and Drools with framework and component knowledge base support,
+Markdown support, JSON-RPC improvements, data loading improvements to
+support CSV files and calling services to load data, a Quartz Scheduler
+history in the DB and a Quartz persistence implementation, and services to
+clean Quartz history as well as Moqui artifact hit and hit bin histories.
+
+There are various bug fixes and stability improvements in this release for
+things like PostgreSQL support, input data handling, form-list and general
+pagination, Tomcat and other Servlet container deployment, and email
+sending.
+
+This release is backward compatible with the previous release (1.3.2),
+though some configuration changes may be needed and custom HTML/JS may need
+to be updated for the new JS libraries and Metis Admin Template.
+
+New Features:
+
+- Added the Metis Admin Template version 2.1.3
+  (see https://github.com/onokumus/Bootstrap-Admin-Template);
+  This includes an update to jQuery 2.0.3, Bootstrap 3.0.3,
+  jQuery UI 1.10.3, and many other JS libraries.
 - Added Bitronix BTM 2.1.4 as alternative to Atomikos
 - Added JBoss KIE and Drools libraries (version 6.0.0.Final) and Moqui API
   additions for getting a KieContext, plus Moqui automatically loads and
   builds component kie directories when present
+- Added Markdown4J 2.2
+- Added Apache Commons CSV 1.0-SNAPSHOT 20140122
+- Updated Apache HttpCore to 4.3.1, HttpClient to 4.3.2, Commons Logging
+  to 1.1.3, Commons Codec to 1.6
+- Updated Apache Lucene to 4.6.1, ehcache to 2.8.1, ElasticSearch to 1.0.1,
+  Groovy to 2.2.2
+- Updated Winstone to 1.0.5 (note this is very different from 0.9.10)
+
 - Added ISO 8601 date/time parsing as another default in L10nFacade
-- Added transaction-facade.@use-transaction-cache attribute, defaults to
-  true, set to false to disable the TransactionCache globally
-- Added new transaction-facade sub-elements transaction-jndi and
-  transaction-internal instead of single transaction-factory;
-  transaction-internal has a class attribute to specify an implementation
-  of the TransactionInternal interface to init/destroy the JTA impl
-- TransactionFacade now has active Synchronization registry like the active
-  XAResource registry per transaction that existed before
-- Moved XAResource tools to Synchronization: TransactionCache, OrientDB tx
-  handler, ServiceCallSpecial.registerOnCommit() and registerOnRollback(),
-  Service ECA rule tx-commit and tx-rollback, EntityDataFeed
+- Added transition.@read-only attribute to skip XSRF check for insecure
+  parameters when the transition does not modify data, and when data is
+  not too sensitive
+- Added transition.parameter sub-elements to declare additional parameters
+  for a transition, just like and in addition to the screen parameters
+- Added Markdown wiki support for files with extensions .md and .markdown
+  using Markdown4J, and .md.ftl or .markdown.ftl for FTL + Markdown
+- Added clean#ArtifactData service to remove ArtifactHit/Bin records older
+  than a certain number of days (default 60), and a XML configured Quartz
+  job with a trigger to run it every day at 2AM
+
+- Entity Facade
+  - Enhanced EntityDataLoader to also call services, just use the service
+    name (leave out hash (#)) instead of entity name for the XML element
+  - Enhanced EntityDataLoader to support CSV files with the entity or
+    service name on the first line, then a header line, then the data lines
+  - The entity-find-one.@value-field attribute can now be an existing Map
+    that is not an EntityValue and if so entity fields are added to the Map
+    instead of assigning the find result to @value-field
+  - Improved EntityFind and EntityList for cached pagination
+- Service Facade
+  - Removed Dzhuvinov JSON-RPC jars (implemented internally now)
+  - Improved and fixed JSON-RPC remote service client and auto server
+  - Changed service.@validate=false to still apply defaults and type
+    conversions for defined in-parameters, but not exclude undefined params
+    or error on other validation errors
+  - Added parameter.@default attribute which is like the @default-value
+    attribute except that it is a field name or expression for the default
+    field value.
+  - Added SchedulerHistory and code to populate it on various Quartz
+    Scheduler events, and scheduled service to clean up old records
+  - Added EntityJobStore to do persistence for Quartz Scheduler through
+    the Entity Facade instead of direct to DB for easier deployment and
+    more consistent operation with other parts of Moqui Framework
+- Transaction Facade
+  - Added transaction-facade.@use-transaction-cache attribute, defaults to
+    true, set to false to disable the TransactionCache globally
+  - Added new transaction-facade sub-elements transaction-jndi and
+    transaction-internal instead of single transaction-factory;
+    transaction-internal has a class attribute to specify an implementation
+    of the TransactionInternal interface to init/destroy the JTA impl
+  - TransactionFacade now has active Synchronization registry like the
+    active XAResource registry per transaction that existed before
+  - Moved XAResource tools to Synchronization: TransactionCache, OrientDB
+    tx handler, ServiceCallSpecial.registerOnCommit() and
+    registerOnRollback(), Service ECA rule tx-commit and tx-rollback,
+    EntityDataFeed
 
 Bug Fixes:
 
@@ -38,6 +133,43 @@ Bug Fixes:
   insensitive string matching), now only expands transition value if it
   contains a "${"
 - Fixed not-like entity condition operator which was treated as like
+- Fixed bug in EntityFind.searchFormInputs using ec.web.parameters instead
+  of context; parameters are added to the context and other things may be
+  too before this is called, so best to just use the context
+- Changed data stored on login to be done in separate transactions so that
+  the records aren't locked for the full surrounding tx preventing the
+  same user from auth for other transactions
+- Fixed issue with runtime/db directory not being included in gradle
+  addRuntime and ant add-runtime, caused Derby to do funny things and
+  OrientDB to not run at all under Tomcat and other external containers
+- Fixed issue with Logger initializing before moqui.runtime is set when
+  running under external servlet containers like Tomcat
+- Fixed issue with DbResourceReference.putStream which tried to pass an
+  InputStream to the JDBC driver, which isn't likely to be handled; now
+  reads from the stream to a byte[] and wraps in a SerialBlob
+- Fixed issue when startup-add-missing is true but runtime-add-missing is
+  false it would not really check and add missing on startup
+- Improvements to DB meta data handling for databases like Postgres that
+  default to lower-case table, column, and foreign names
+- Fixed issue with sri.getFieldValuePlainString() calling toString on
+  BigDecimal objects as BigDecimal.toString() uses scientific notation by
+  default and aside from being annoying the parser doesn't handle it and
+  treats things like 100 represented as 1E2 as 1
+- Fixed issue with iterate over a Map when key attribute is set where the
+  key and value were switched in the specified field names
+- Links (including URL parameter and hidden form) now handle Timestamp and
+  BigDecimal the same as hidden form fields. This resolves issues with time
+  zones for Timestamps, and with number parsing for BigDecimals.
+- Fixed issues with transition path-parameter when screen has no actions
+  where transition was not removed from the path name list and path,
+  screen, and transition parameters were not expanded for response
+  parameters
+- Fixed issue in sendEmailTemplate.groovy where webappName was passed into
+  the screen render for the HTML for the email, but not the plain text
+- Fixed issues related to entity-find.@cache attribute used inconsistently
+  in generated code, and more generally with filtering and pagination when
+  using both entity-find.@cache=true and entity-find.search-form-inputs,
+  especially along with entity-find.date-filter.
 
 ===========================================================================
 Release 1.3.2 - 20 Nov 2013
@@ -893,7 +1025,7 @@ This release includes:
   - Added entity-auto support for the verb "store" which does a create if
     record does not exist and update if it does
   - Support of pre-configured scheduled job exists, see:
-    http://www.quartz-scheduler.org/docs/cookbook/JobInitPlugin.html
+    http://quartz-scheduler.org/documentation/quartz-2.2.x/cookbook/JobInitPlugin
 - Artifact Execution Facade
   - Persist data about authz failures (in ArtifactAuthzFailure entity)
   - Artifact Tar-pitting based on configuration in db (see example
@@ -1292,14 +1424,13 @@ Features considered, but may not to be included in 1.x series
   - Screen tree elements
   - Screen section-iterate pagination
   - Screen form automatic client JS validation for service in-parameters
-    for matches, number-range, text-length, text-letters, time-range,
+    for number-range, text-length, text-letters, time-range,
     credit-card.@types
   - Dynamic Screens (database-driven: DynamicScreen* entities)
   - Dynamic Forms (database-driven: DynForm* entities) like the OFBiz
     Survey and related entities (DbForm already in place to extend
     XML Screen Forms)
 - Entity Facade
-  - Support for CouchDB, and perhaps other NoSQL databases
   - LiquiBase integration, entity.change-set element
   - EntitySync tool
   - Add view log like current change audit log (AuditLogView?)
@@ -1322,7 +1453,6 @@ Features considered, but may not to be included in 1.x series
   - Script Run (or groovy shell?)
   - Service
     - Configure and run chain of services (dynamic wizard)
-    - Scheduler (view scheduled services with cancel and add)
   - Artifact Info screens (with in/out references for all)
 
 - Workflow that manages activity flow with screens and service attached to
@@ -1330,8 +1460,6 @@ Features considered, but may not to be included in 1.x series
   screen; see BonitaSoft.com Open Source BPM for similar concept; generally
   workflow without requiring implementation of an entire app once the
   workflow itself is defined
-
-- Markdown wiki support (.markdown, .markdown.ftl - https://code.google.com/p/markdown4j/)
 
 - Interesting JS plugins
   - http://arshaw.com/fullcalendar/
@@ -1366,6 +1494,7 @@ Features considered, but may not to be included in 1.x series
   x export screen (design similar to entity export screen; select documents, from/thru dates, file or browser output
   x DataDocumentRelationshipAlias (need shorter name) for more flexible output: dataDocumentId, relationshipName, documentAlias
 - Data Search
+  - different ElasticSearch instances or indexes per Tenant
   x use elasticsearch.org
   x get data from Data Feed, Data Search index is a feed receive service
   x receive#DataFeed interface service implementation

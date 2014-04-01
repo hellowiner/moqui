@@ -11,7 +11,7 @@ This Work includes contributions authored by David E. Jones, not as a
 "work for hire", who hereby disclaims any copyright to the same.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-1.4.xsd"
         default-menu-title="Content" default-menu-index="4">
     
     <parameter name="exampleId"/>
@@ -37,7 +37,8 @@ This Work includes contributions authored by David E. Jones, not as a
             String fileName = contentFile.getName()
             ec.logger.info("Uploading file [${fileName}] for Example [${exampleId}] in repository [${repositoryName}] with purpose [${purposeEnumId}] and locale [${locale}]")
 
-            String contentLocation = "content://${repositoryName}/moqui/example/${exampleId}/${fileName}"
+            // String contentLocation = "content://${repositoryName}/moqui/example/${exampleId}/${fileName}"
+            String contentLocation = "dbresource://moqui/example/${exampleId}/${fileName}"
             ResourceReference newRr = ec.resource.getLocationReference(contentLocation)
             InputStream fileStream = contentFile.getInputStream()
             newRr.putStream(fileStream)
@@ -96,7 +97,7 @@ This Work includes contributions authored by David E. Jones, not as a
                 <form-single name="UploadExampleContent" transition="uploadExampleContent">
                     <field name="exampleId"><default-field><hidden/></default-field></field>
                     <field name="contentFile"><default-field><file/></default-field></field>
-                    <field name="repositoryName"><default-field><text-line size="20" default-value="main"/></default-field></field>
+                    <!-- <field name="repositoryName"><default-field><text-line size="20" default-value="main"/></default-field></field> -->
                     <field name="purposeEnumId"><default-field title="Purpose">
                         <drop-down><entity-options><entity-find entity-name="moqui.basic.Enumeration">
                             <econdition field-name="enumTypeId" value="ExampleContentPurpose"/>

@@ -28,16 +28,20 @@ import java.sql.Timestamp
 
 public class EntityAutoServiceRunner implements ServiceRunner {
     protected final static Logger logger = LoggerFactory.getLogger(EntityAutoServiceRunner.class)
+
+    final static Set<String> verbSet = new TreeSet(["create", "update", "delete", "store"])
     protected ServiceFacadeImpl sfi = null
 
     EntityAutoServiceRunner() {}
 
     public ServiceRunner init(ServiceFacadeImpl sfi) { this.sfi = sfi; return this }
 
+    // TODO: add update-expire and delete-expire entity-auto service verbs for entities with from/thru dates
+    // TODO: add find (using search input parameters) and find-one (using literal PK, or as many PK fields as are passed on) entity-auto verbs
     public Map<String, Object> runService(ServiceDefinition sd, Map<String, Object> parameters) {
         // check the verb and noun
-        if (!sd.verb || ("create" != sd.verb && "update" != sd.verb && "delete" != sd.verb && "store" != sd.verb))
-            throw new ServiceException("In service [${sd.serviceName}] the verb must be create, update, or delete for entity-auto type services.")
+        if (!sd.verb || !verbSet.contains(sd.verb))
+            throw new ServiceException("In service [${sd.serviceName}] the verb must be one of ${verbSet} for entity-auto type services.")
         if (!sd.noun)  throw new ServiceException("In service [${sd.serviceName}] you must specify a noun for entity-auto engine")
 
         EntityDefinition ed = sfi.ecfi.entityFacade.getEntityDefinition(sd.noun)
@@ -63,6 +67,14 @@ public class EntityAutoServiceRunner implements ServiceRunner {
                 deleteEntity(sfi, ed, parameters)
             } else if ("store" == sd.verb) {
                 storeEntity(sfi, ed, parameters, result, sd.getOutParameterNames())
+            } else if ("update-expire" == sd.verb) {
+                // TODO
+            } else if ("delete-expire" == sd.verb) {
+                // TODO
+            } else if ("find" == sd.verb) {
+                // TODO
+            } else if ("find-one" == sd.verb) {
+                // TODO
             }
         } catch (BaseException e) {
             throw new ServiceException("Error doing entity-auto operation for entity [${ed.fullEntityName}] in service [${sd.serviceName}]", e)
@@ -79,7 +91,7 @@ public class EntityAutoServiceRunner implements ServiceRunner {
         List<String> pkFieldNames = ed.getPkFieldNames()
 
         // always make fromDate optional, whether or not part of the pk; do this before the allPksIn check
-        if (pkFieldNames.contains("fromDate") && !parameters.containsKey("fromDate")) {
+        if (pkFieldNames.contains("fromDate") && parameters.get("fromDate") == null) {
             Timestamp fromDate = ecfi.getExecutionContext().getUser().getNowTimestamp()
             parameters.put("fromDate", fromDate)
             result.put("fromDate", fromDate)
@@ -121,6 +133,7 @@ public class EntityAutoServiceRunner implements ServiceRunner {
             /* **** plain specified primary key **** */
             newEntityValue.setFields(parameters, true, null, true)
         } else {
+            logger.error("Entity [${ed.getFullEntityName()}] auto create pk fields ${pkFieldNames} incomplete: ${parameters}")
             throw new ServiceException("In entity-auto create service for entity [${ed.fullEntityName}]: " +
                     "could not find a valid combination of primary key settings to do a create operation; options include: " +
                     "1. a single entity primary-key field for primary auto-sequencing with or without matching in-parameter, and with or without matching out-parameter for the possibly sequenced value, " +
